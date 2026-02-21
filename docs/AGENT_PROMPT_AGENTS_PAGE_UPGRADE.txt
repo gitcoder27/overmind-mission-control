@@ -1,0 +1,109 @@
+You are implementing an Agents page upgrade for Overmind Mission Control.
+
+Project root:
+/home/ubuntu/Development/overmind-mission-control
+
+MANDATORY READS (in order):
+1) /home/ubuntu/Development/overmind-mission-control/docs/AI_AGENT_CONTEXT.md
+2) /home/ubuntu/Development/overmind-mission-control/frontend/IMPLEMENTATION_BRIEF.md
+3) /home/ubuntu/Development/overmind-mission-control/backend/IMPLEMENTATION_BRIEF.md
+4) /home/ubuntu/Development/overmind-mission-control/docs/agents-page-upgrade-spec-v1.md
+5) /home/ubuntu/Development/overmind-mission-control/docs/frontend-architecture.md
+6) /home/ubuntu/Development/overmind-mission-control/docs/provider-contract.md
+
+Objective:
+Upgrade `/agents` to show rich OpenClaw-aware metadata and add an agent detail experience with profile docs + sessions.
+
+==================================================
+REQUIRED FEATURES
+==================================================
+
+A) Agents grid enhancements
+- Show effective model per agent.
+- Show model source badge: primary/default/unknown.
+- Show registration + profile health chips.
+
+B) Agent detail view
+- Add route `/agents/:agentId` (preferred).
+- Detail page sections:
+  1) metadata header (name, role, id, model, source, status)
+  2) profile files list (AGENTS/SOUL/IDENTITY/USER/TOOLS)
+  3) markdown viewer for selected file
+  4) recent sessions list
+
+C) Backend API additions
+Implement these endpoints:
+- GET `/api/v1/agents` (extended fields)
+- GET `/api/v1/agents/{agentId}`
+- GET `/api/v1/agents/{agentId}/files`
+- GET `/api/v1/agents/{agentId}/files/{fileKey}`  (allowlist only)
+- GET `/api/v1/agents/{agentId}/sessions`
+
+D) OpenClaw model logic
+- Primary: model on the specific agent entry from `openclaw agents list --json`
+- Fallback: `agents.defaults.model` from OpenClaw config
+- expose as:
+  - `effectiveModel`
+  - `modelSource`
+
+==================================================
+SECURITY + SAFETY CONSTRAINTS
+==================================================
+
+- No direct operator-state DB/file mutation shortcuts.
+- No secrets exposure from OpenClaw auth/config.
+- File reading must be strict allowlist + base-path safe.
+- Keep response envelope contract unchanged.
+
+==================================================
+IMPLEMENTATION STYLE
+==================================================
+
+- Minimal, targeted changes only (no architecture rewrite).
+- Reuse provider/query patterns.
+- No direct endpoint calls from route components.
+- Keep loading/error/empty states robust.
+
+==================================================
+FILES LIKELY TO CHANGE
+==================================================
+
+Frontend:
+- frontend/src/router.tsx
+- frontend/src/routes/agents.tsx
+- frontend/src/routes/agent-detail.tsx (new)
+- frontend/src/queries/useSnapshot.ts
+- frontend/src/types/domain.ts
+- shared UI components for markdown/session tables if needed
+
+Backend:
+- backend/app/routers/agents.py
+- backend/app/services/openclaw.py
+- backend/app/models/domain.py (if needed)
+- backend/tests/test_api.py
+
+Docs:
+- docs/implementation-log.md (frontend updates)
+- docs/backend-implementation-log.md (backend updates)
+- docs/known-gaps.md (if changed)
+
+==================================================
+VALIDATION (MANDATORY)
+==================================================
+
+Run and include outputs:
+1) frontend: `npm run lint`
+2) frontend: `npm run test:run`
+3) frontend: `npm run build`
+4) backend: `pytest -q`
+
+Also include smoke outputs for new agent endpoints.
+
+==================================================
+DELIVERABLE FORMAT
+==================================================
+
+1) Summary of changes
+2) Exact files changed
+3) Validation outputs
+4) Remaining limitations / follow-up suggestions

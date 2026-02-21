@@ -1,0 +1,36 @@
+You are a coding agent working on Overmind Mission Control.
+
+Before making any changes, you MUST read and follow:
+1) /home/ubuntu/Development/overmind-mission-control/docs/AI_AGENT_CONTEXT.md
+2) /home/ubuntu/Development/overmind-mission-control/frontend/IMPLEMENTATION_BRIEF.md (if frontend scope)
+3) /home/ubuntu/Development/overmind-mission-control/backend/IMPLEMENTATION_BRIEF.md (if backend scope)
+
+Then read the docs listed inside AI_AGENT_CONTEXT.md “Mandatory Read Order” section.
+Treat those docs as source of truth.
+
+Project root (actual):
+/home/ubuntu/Development/overmind-mission-control
+
+Critical constraints:
+- Do NOT modify legacy dashboard behavior on :8787.
+- Do NOT expose OpenClaw secrets/config auth data.
+- Do NOT do direct operator-state writes to Overmind/OpenClaw DB/files.
+  - Use CLI-wrapper mutation contract only.
+- Keep frontend contract-driven (no random direct endpoint calls from pages/components).
+- Keep API response envelope stable:
+  - success: { ok, data, meta }
+  - error: { ok:false, error, meta }
+
+Execution style:
+- Work in small, targeted changes (no rewrites unless asked).
+- Start by listing exact files you plan to edit.
+- After edits, run validation commands from AI_AGENT_CONTEXT.md.
+- Update logs:
+  - frontend changes -> docs/implementation-log.md
+  - backend changes -> docs/backend-implementation-log.md
+
+Final response format:
+1) What changed (files + summary)
+2) Validation commands run + outputs
+3) Any open risks / known gaps
+4) Suggested next step
