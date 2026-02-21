@@ -340,3 +340,64 @@ async def cron_run(job_id: str) -> str:
     cli_cache.invalidate("oc:cron_list")
     cli_cache.invalidate("oc:cron_status")
     return result
+
+
+# ─── Manager / Coordinator Commands ─────────────────────────────
+
+_MANAGER_TURN_TIMEOUT = 60  # coordinator responses can be slow
+
+async def manager_send_message(
+    session_key: str,
+    message: str,
+    agent_id: str = "overmind-coordinator",
+) -> dict[str, Any]:
+    """Send a message to the manager agent and return the response.
+
+    Uses ``openclaw agent turn`` which sends a user turn to the specified
+    agent session and returns the assistant reply as JSON.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        return _run_openclaw_sync(
+            [
+                "agent", "turn",
+                "--agent", agent_id,
+                "--session", session_key,
+                "--message", message,
+                "--json",
+            ],
+            timeout=_MANAGER_TURN_TIMEOUT,
+        )
+
+    raw = await loop.run_in_executor(None, _run)
+    return _parse_json(raw, "manager turn")
+
+
+async def manager_session_history(
+    session_key: str,
+    agent_id: str = "overmind-coordinator",
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Retrieve recent messages for a manager session (cached briefly)."""
+    cache_key = f"oc:manager_session:{agent_id}:{session_key}"
+
+    async def _fetch():
+        raw = await _run_openclaw_async(
+            [
+                "agent", "session-history",
+                "--agent", agent_id,
+                "--session", session_key,
+                "--limit", str(limit),
+                "--json",
+            ]
+        )
+        data = _parse_json(raw, "session history")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("messages", data.get("items", []))
+        return []
+
+    result = await cli_cache.get_or_fetch(cache_key, _fetch, ttl=5.0)
+    return result

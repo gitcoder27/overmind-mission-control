@@ -390,3 +390,47 @@ export interface WsEvent {
   timestamp: string;
   payload: unknown;
 }
+
+// ──────────────────────────────────────────────────────
+// Control Surface Types
+// ──────────────────────────────────────────────────────
+
+export type IntakeRouteType = 'auto' | 'coding' | 'research' | 'hybrid';
+
+export interface IntakeRequest {
+  goal: string;
+  routeType: IntakeRouteType;
+  priority: number;
+  notes?: string;
+}
+
+export interface IntakeResult {
+  projectId: string;
+  status: string;
+  routeType: string;
+  priority: number;
+}
+
+export interface ManagerMessageRequest {
+  sessionKey: string;
+  message: string;
+}
+
+export interface ManagerMessageResult {
+  response: string;
+  sessionKey: string;
+  model: string | null;
+  usage: Record<string, number> | null;
+}
+
+export interface ManagerChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string | null;
+}
+
+export interface ManagerSessionResult {
+  sessionKey: string;
+  messages: ManagerChatMessage[];
+  count: number;
+}

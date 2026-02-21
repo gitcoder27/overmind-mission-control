@@ -12,6 +12,11 @@ import type {
   SessionMessage,
   TranscriptResponse,
   TranscriptItem,
+  IntakeRequest,
+  IntakeResult,
+  ManagerMessageRequest,
+  ManagerMessageResult,
+  ManagerSessionResult,
 } from '@/types/domain';
 
 export interface ProviderCapabilities {
@@ -23,6 +28,8 @@ export interface ProviderCapabilities {
   pauseOrchestrator: boolean;
   resumeOrchestrator: boolean;
   cronActions: boolean;
+  controlIntake: boolean;
+  controlChat: boolean;
 }
 
 export interface DataProvider {
@@ -61,4 +68,9 @@ export interface DataProvider {
   enableCronJob(id: string): Promise<void>;
   disableCronJob(id: string): Promise<void>;
   runCronJob(id: string): Promise<void>;
+
+  // Control Surface
+  createProject(intake: IntakeRequest): Promise<IntakeResult>;
+  sendManagerMessage(req: ManagerMessageRequest): Promise<ManagerMessageResult>;
+  getManagerSession(sessionKey: string): Promise<ManagerSessionResult>;
 }

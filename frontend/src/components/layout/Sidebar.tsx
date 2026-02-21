@@ -11,6 +11,7 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  Terminal,
 } from 'lucide-react';
 
 interface NavItem {
@@ -22,6 +23,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Overview', path: '/', icon: LayoutDashboard },
+  { label: 'Command Center', path: '/control', icon: Terminal },
   { label: 'Projects', path: '/projects', icon: FolderKanban },
   { label: 'Live Ops', path: '/live', icon: Radio },
   { label: 'Agents', path: '/agents', icon: Bot },

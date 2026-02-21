@@ -19,6 +19,8 @@ const capabilities: ProviderCapabilities = {
   pauseOrchestrator: false,
   resumeOrchestrator: false,
   cronActions: false,
+  controlIntake: false,
+  controlChat: false,
 };
 
 function delay(ms: number): Promise<void> {
@@ -180,5 +182,8 @@ export function createMockProvider(): DataProvider {
     async enableCronJob() { throw new Error('Not supported in mock provider'); },
     async disableCronJob() { throw new Error('Not supported in mock provider'); },
     async runCronJob() { throw new Error('Not supported in mock provider'); },
+    async createProject() { throw new Error('Not supported in mock provider'); },
+    async sendManagerMessage() { throw new Error('Not supported in mock provider'); },
+    async getManagerSession() { throw new Error('Not supported in mock provider'); },
   };
 }

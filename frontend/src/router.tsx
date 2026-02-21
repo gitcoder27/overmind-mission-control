@@ -1,6 +1,7 @@
 import { createRouter, createRootRoute, createRoute } from '@tanstack/react-router';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { OverviewPage } from '@/routes/overview';
+import { ControlPage } from '@/routes/control';
 import { ProjectsListPage } from '@/routes/projects-list';
 import { ProjectDetailPage } from '@/routes/project-detail';
 import { LiveOpsPage } from '@/routes/live';
@@ -18,6 +19,15 @@ const overviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: OverviewPage,
+});
+
+const controlRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/control',
+  component: ControlPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: (search.tab as string) || undefined,
+  }),
 });
 
 const projectsRoute = createRoute({
@@ -76,6 +86,7 @@ const systemHealthRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   overviewRoute,
+  controlRoute,
   projectsRoute,
   projectDetailRoute,
   liveRoute,

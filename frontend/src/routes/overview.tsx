@@ -51,6 +51,13 @@ export function OverviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate({ to: '/control', search: { tab: 'intake' } })}
+            className="flex items-center gap-1.5 rounded-lg bg-accent/10 border border-accent/20 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/15 transition-colors"
+          >
+            <Zap className="h-3 w-3" />
+            New Project
+          </button>
           <HealthPill status={snapshot.health.overall} />
           <span className="text-[11px] font-mono text-text-muted">
             Updated <TimeAgo date={snapshot.timestamp} />

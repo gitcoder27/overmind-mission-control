@@ -137,6 +137,37 @@ async def project_set_status(project_id: str, to_status: str, reason: str = "") 
     return await _run_ovm(cmd, timeout=CLI_MUTATION_TIMEOUT)
 
 
+async def project_create(
+    goal: str,
+    route_type: str = "auto",
+    priority: int = 3,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Create a new project via Overmind CLI.
+
+    Notes:
+    - Overmind CLI accepts ``--route`` only for coding/research/hybrid.
+      Route ``auto`` should omit the flag and let framework intake classify.
+    - Overmind CLI currently has no ``--notes`` flag. If notes are provided,
+      append them to the goal so user context is not lost.
+
+    Returns parsed JSON with projectId and status on success.
+    """
+    normalized_route = (route_type or "").strip().lower()
+
+    effective_goal = goal
+    if notes and notes.strip():
+        effective_goal = f"{goal}\n\nAdditional context:\n{notes.strip()}"
+
+    cmd = ["project", "create", "--goal", effective_goal, "--priority", str(priority)]
+
+    if normalized_route in {"coding", "research", "hybrid"}:
+        cmd += ["--route", normalized_route]
+
+    raw = await _run_ovm(cmd, timeout=CLI_MUTATION_TIMEOUT)
+    return _parse_json(raw, "project create")
+
+
 async def orchestrator_pause() -> str:
     """Pause the orchestrator."""
     return await _run_ovm(["orchestrator", "pause"], timeout=CLI_MUTATION_TIMEOUT)

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { useAgent, useAgentFiles, useAgentFileContent, useAgentSessions } from '@/queries/useSnapshot';
 import { ConversationReplay } from '@/components/agents/ConversationReplay';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -8,6 +8,7 @@ import { cn, getAgentRoleIcon, formatDuration, formatRelativeTime, shortId } fro
 import {
   ArrowLeft, FileText, MessageSquare, Clock, CheckCircle2, XCircle, Copy, Hash,
   Play, Search, SortDesc, Filter, Download, ChevronRight, Activity, Zap, X,
+  Terminal,
 } from 'lucide-react';
 import type { AgentFileInfo, AgentSession } from '@/types/domain';
 
@@ -317,6 +318,9 @@ export function AgentDetailPage({ agentId }: { agentId: string }) {
               </div>
             </div>
           </div>
+          {agent.role === 'coordinator' && (
+            <ManagerConsoleButton />
+          )}
         </div>
 
         {/* Stats row */}
@@ -553,5 +557,20 @@ export function AgentDetailPage({ agentId }: { agentId: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Manager Console Deep-Link ─────────────────────────────────
+
+function ManagerConsoleButton() {
+  const navigate = useNavigate();
+  return (
+    <button
+      onClick={() => navigate({ to: '/control', search: { tab: 'chat' } })}
+      className="flex items-center gap-1.5 rounded-lg bg-accent/10 border border-accent/20 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/15 transition-colors whitespace-nowrap"
+    >
+      <Terminal className="h-3 w-3" />
+      Open Manager Console
+    </button>
   );
 }

@@ -24,6 +24,8 @@ const capabilities: ProviderCapabilities = {
   pauseOrchestrator: false,
   resumeOrchestrator: false,
   cronActions: false,
+  controlIntake: false,
+  controlChat: false,
 };
 
 const LEGACY_BASE = import.meta.env.VITE_LEGACY_BASE_URL || 'http://127.0.0.1:8787';
@@ -456,6 +458,9 @@ export function createLegacyProvider(): DataProvider {
     async enableCronJob() { throw new Error('Not supported in legacy provider'); },
     async disableCronJob() { throw new Error('Not supported in legacy provider'); },
     async runCronJob() { throw new Error('Not supported in legacy provider'); },
+    async createProject() { throw new Error('Not supported in legacy provider'); },
+    async sendManagerMessage() { throw new Error('Not supported in legacy provider'); },
+    async getManagerSession() { throw new Error('Not supported in legacy provider'); },
   };
 }
 

@@ -15,6 +15,7 @@ from app.config import CORS_ORIGINS, ENV
 from app.models.responses import get_request_id, set_request_id
 from app.routers import system, projects, events, agents, cron, ws
 from app.routers import auth as auth_router
+from app.routers import control
 from app.routers import system_metrics_ws
 from app.auth import require_auth
 
@@ -86,6 +87,7 @@ app.include_router(projects.router, prefix="/api/v1", dependencies=[Depends(requ
 app.include_router(events.router, prefix="/api/v1", dependencies=[Depends(require_auth)])
 app.include_router(agents.router, prefix="/api/v1", dependencies=[Depends(require_auth)])
 app.include_router(cron.router, prefix="/api/v1", dependencies=[Depends(require_auth)])
+app.include_router(control.router, prefix="/api/v1", dependencies=[Depends(require_auth)])
 app.include_router(ws.router)  # WebSocket at root (WS auth via query param)
 app.include_router(system_metrics_ws.router, prefix="/api/v1")  # Live system metrics WS
 

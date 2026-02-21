@@ -13,11 +13,18 @@ import type {
   SessionMessage,
   TranscriptResponse,
   TranscriptItem,
+  IntakeRequest,
+  IntakeResult,
+  ManagerMessageRequest,
+  ManagerMessageResult,
+  ManagerSessionResult,
 } from '@/types/domain';
 import { useAuthStore } from '@/stores/authStore';
 
 const capabilities: ProviderCapabilities = {
   realtime: true,
+  controlIntake: true,
+  controlChat: true,
   mutations: true,
   approveProject: true,
   requestChanges: true,
@@ -169,6 +176,25 @@ export function createApiProvider(): DataProvider {
 
     async runCronJob(id) {
       await apiFetch(`/cron/jobs/${id}/run`, { method: 'POST' });
+    },
+
+    // Control Surface
+    async createProject(intake: IntakeRequest) {
+      return apiFetch<IntakeResult>('/control/projects', {
+        method: 'POST',
+        body: JSON.stringify(intake),
+      });
+    },
+
+    async sendManagerMessage(req: ManagerMessageRequest) {
+      return apiFetch<ManagerMessageResult>('/control/manager/message', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      });
+    },
+
+    async getManagerSession(sessionKey: string) {
+      return apiFetch<ManagerSessionResult>(`/control/manager/session/${encodeURIComponent(sessionKey)}`);
     },
   };
 }

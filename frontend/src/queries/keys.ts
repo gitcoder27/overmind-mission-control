@@ -17,4 +17,5 @@ export const queryKeys = {
     ['agent', agentId, 'sessions', sessionKey, 'transcript', 'item', itemIndex] as const,
   cronJobs: ['cronJobs'] as const,
   systemHealth: ['systemHealth'] as const,
+  managerSession: (sessionKey: string) => ['managerSession', sessionKey] as const,
 } as const;
