@@ -5,6 +5,7 @@ import { useSnapshot } from '@/queries/useSnapshot';
 import { useCreateProject, useManagerChat } from '@/queries/useControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { MarkdownRenderer } from '@/components/ui/MarkdownRenderer';
 import type { IntakeRouteType } from '@/types/domain';
 import {
   Rocket,
@@ -620,7 +621,11 @@ function ChatBubble({
             : 'bg-surface-elevated border border-border text-text-primary rounded-tl-md',
         )}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <MarkdownRenderer content={message.content} />
+        )}
         {message.timestamp && (
           <p className={cn('mt-1.5 text-[10px]', isUser ? 'text-info/40 text-right' : 'text-text-muted/40')}>
             {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

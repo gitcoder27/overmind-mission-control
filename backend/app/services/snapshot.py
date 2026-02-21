@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -162,12 +163,14 @@ def _get_orchestrator_status() -> OrchestratorStatus:
     except (FileNotFoundError, ValueError):
         pass
 
+    heartbeat_age = None
+
     # Heartbeat
     try:
         stat = OVERMIND_HEARTBEAT.stat()
         heartbeat_ts = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-        age = time.time() - stat.st_mtime
-        stagnant = age > 30  # stagnant if heartbeat > 30s old
+        heartbeat_age = time.time() - stat.st_mtime
+        stagnant = heartbeat_age > 30  # base stale threshold
     except FileNotFoundError:
         stagnant = True
 
@@ -175,14 +178,44 @@ def _get_orchestrator_status() -> OrchestratorStatus:
     cursor_pos = 0
     cursor_lag = 0
     try:
-        row = fetch_one("SELECT value FROM runtime_state WHERE key = 'cursor_position'")
-        if row:
+        # New key used by overmind_hq runtime; keep legacy fallback.
+        row = fetch_one(
+            """
+            SELECT value
+            FROM runtime_state
+            WHERE key IN ('orchestrator.last_event_rowid', 'cursor_position')
+            ORDER BY CASE key WHEN 'orchestrator.last_event_rowid' THEN 0 ELSE 1 END
+            LIMIT 1
+            """
+        )
+        if row and row.get("value") is not None:
             cursor_pos = int(row["value"])
         latest = fetch_one("SELECT MAX(ROWID) as max_id FROM events")
         if latest and latest["max_id"]:
-            cursor_lag = int(latest["max_id"]) - cursor_pos
+            cursor_lag = max(0, int(latest["max_id"]) - cursor_pos)
     except Exception:
         pass
+
+    # Avoid false degraded while a normal long-running worker attempt is active.
+    # Orchestrator heartbeat pauses during blocking CLI invocation, so transient
+    # heartbeat staleness is expected until the attempt returns.
+    if running and stagnant:
+        try:
+            attempt_row = fetch_one(
+                """
+                SELECT CAST((strftime('%s','now') - strftime('%s', MIN(started_at))) AS INTEGER) AS oldest_secs
+                FROM task_attempts
+                WHERE status = 'RUNNING'
+                """
+            )
+            oldest_secs = None if not attempt_row else attempt_row.get("oldest_secs")
+            if oldest_secs is not None:
+                oldest_secs = int(oldest_secs)
+                invocation_timeout = int(os.getenv("OVERMIND_INVOCATION_TIMEOUT_SECONDS", "600"))
+                if oldest_secs <= invocation_timeout:
+                    stagnant = False
+        except Exception:
+            pass
 
     return OrchestratorStatus(
         running=running,

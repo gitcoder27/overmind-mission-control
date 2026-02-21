@@ -71,6 +71,16 @@ summary {
   border: 1px solid var(--color-border);
 }
 
+/* ── Markdown prose (chat bubbles & transcript) ── */
+.markdown-prose > :first-child { margin-top: 0; }
+.markdown-prose > :last-child  { margin-bottom: 0; }
+.markdown-prose pre + p,
+.markdown-prose p + pre { margin-top: 0.5rem; }
+.markdown-prose ul ul,
+.markdown-prose ol ol,
+.markdown-prose ul ol,
+.markdown-prose ol ul { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

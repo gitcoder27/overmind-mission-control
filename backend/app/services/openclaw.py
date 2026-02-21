@@ -358,27 +358,108 @@ async def manager_send_message(
     message: str,
     agent_id: str = "overmind-coordinator",
 ) -> dict[str, Any]:
-    """Send a message to the manager agent and return the response.
+    """Send a manager message via Gateway OpenResponses (non-streaming).
 
-    Uses ``openclaw agent turn`` which sends a user turn to the specified
-    agent session and returns the assistant reply as JSON.
+    We intentionally route through ``POST /v1/responses`` with ``user=session_key``
+    so dashboard conversations stay isolated from the coordinator main session
+    and remain stable across browser refreshes.
     """
-    loop = asyncio.get_running_loop()
-
-    def _run():
-        return _run_openclaw_sync(
-            [
-                "agent",
-                "--agent", agent_id,
-                "--session-id", session_key,
-                "--message", message,
-                "--json",
-            ],
-            timeout=_MANAGER_TURN_TIMEOUT,
+    base_url, token, auth_mode = _gateway_http_base_url()
+    if auth_mode not in {"off", "none", "disabled"} and not token:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_AUTH_ERROR",
+            message="Gateway auth token missing in ~/.openclaw/openclaw.json",
         )
 
-    raw = await loop.run_in_executor(None, _run)
-    return _parse_json(raw, "manager turn")
+    endpoint = f"{base_url}/v1/responses"
+    payload = {
+        "model": f"openclaw:{agent_id}",
+        "input": message,
+        "stream": False,
+        "user": session_key,
+    }
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "x-openclaw-agent-id": agent_id,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    timeout = httpx.Timeout(
+        connect=_GATEWAY_STREAM_CONNECT_TIMEOUT,
+        write=_GATEWAY_STREAM_WRITE_TIMEOUT,
+        read=_MANAGER_TURN_TIMEOUT,
+        pool=30.0,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(endpoint, json=payload, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_TIMEOUT",
+            message="Timed out while waiting for OpenClaw Gateway response",
+            details={"error": str(exc)},
+        )
+    except httpx.RequestError as exc:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_UNREACHABLE",
+            message="Failed to reach OpenClaw Gateway responses endpoint",
+            details={"error": str(exc)},
+        )
+
+    if resp.status_code >= 400:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_ERROR",
+            message=f"Gateway /v1/responses returned HTTP {resp.status_code}",
+            details={"status_code": resp.status_code, "body": resp.text[:1000]},
+        )
+
+    data = _parse_json(resp.text, "gateway responses")
+
+    # Normalize OpenResponses output into legacy payload shape expected by router.
+    payloads: list[dict[str, Any]] = []
+    if isinstance(data, dict):
+        output = data.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "message":
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                parts: list[str] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") in {"output_text", "text"}:
+                        text = part.get("text")
+                        if isinstance(text, str) and text:
+                            parts.append(text)
+                text_joined = "".join(parts)
+                if text_joined:
+                    payloads.append({"text": text_joined, "mediaUrl": None})
+
+    first_text = ""
+    if payloads and isinstance(payloads[0], dict):
+        candidate = payloads[0].get("text")
+        if isinstance(candidate, str):
+            first_text = candidate
+
+    return {
+        "response": first_text,
+        "model": data.get("model") if isinstance(data, dict) else None,
+        "usage": data.get("usage") if isinstance(data, dict) else None,
+        "raw": {
+            "result": {
+                "payloads": payloads,
+                "meta": {"openresponses": data},
+            }
+        },
+    }
 
 
 def _gateway_http_base_url() -> tuple[str, str | None, str]:
@@ -543,14 +624,15 @@ async def manager_stream_message(
         )
     endpoint = f"{base_url}/v1/responses"
     payload = {
-        "agentId": agent_id,
-        "sessionKey": session_key,
+        "model": f"openclaw:{agent_id}",
         "input": message,
         "stream": True,
+        "user": session_key,
     }
     headers = {
         "Accept": "text/event-stream",
         "Content-Type": "application/json",
+        "x-openclaw-agent-id": agent_id,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -592,6 +674,8 @@ async def manager_stream_message(
                         return
 
                     if data_raw == "[DONE]":
+                        if seen_done:
+                            return
                         seen_done = True
                         yield {"event": "done", "data": {"sessionKey": session_key}}
                         return
@@ -612,6 +696,8 @@ async def manager_stream_message(
 
                     event_lower = effective_event.lower()
                     if event_lower in {"done", "response.completed", "completed"}:
+                        if seen_done:
+                            return
                         seen_done = True
                         yield {
                             "event": "done",
@@ -706,11 +792,119 @@ async def manager_session_history(
     agent_id: str = "overmind-coordinator",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Retrieve recent messages for a manager session.
-    
-    Note: Session history is not available via CLI. The frontend should
-    maintain local state or use the Gateway WebSocket for real-time updates.
+    """Retrieve recent manager chat messages from the agent session store.
+
+    Dashboard chat uses OpenResponses ``user=<session_key>``, which OpenClaw
+    stores under: ``agent:<agent_id>:openresponses-user:<session_key>``.
     """
-    # CLI does not support session-history; return empty for now.
-    # Consider using Gateway WebSocket or maintaining local chat state.
-    return []
+    sessions_dir = OPENCLAW_ROOT / "agents" / agent_id / "sessions"
+    store_path = sessions_dir / "sessions.json"
+    if not store_path.exists():
+        return []
+
+    try:
+        with open(store_path, "r", encoding="utf-8") as f:
+            store_payload = json.load(f)
+    except Exception:
+        return []
+
+    if not isinstance(store_payload, dict):
+        return []
+
+    candidates = [
+        f"agent:{agent_id}:openresponses-user:{session_key}",
+        session_key,
+        f"agent:{agent_id}:{session_key}",
+    ]
+
+    session_entry: dict[str, Any] | None = None
+    for key in candidates:
+        value = store_payload.get(key)
+        if isinstance(value, dict):
+            session_entry = value
+            break
+
+    # Fallback: match any key that suffix-matches the requested session key.
+    if session_entry is None:
+        suffix = f":{session_key}"
+        for key, value in store_payload.items():
+            if isinstance(key, str) and key.endswith(suffix) and isinstance(value, dict):
+                session_entry = value
+                break
+
+    if session_entry is None:
+        return []
+
+    session_id = session_entry.get("sessionId")
+    if not isinstance(session_id, str) or not session_id.strip():
+        return []
+
+    transcript_path = sessions_dir / f"{session_id}.jsonl"
+    if not transcript_path.exists():
+        return []
+
+    messages: list[dict[str, Any]] = []
+
+    def _extract_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "text":
+                    continue
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+            return "".join(parts)
+        return ""
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(row, dict) or row.get("type") != "message":
+                    continue
+                msg = row.get("message")
+                if not isinstance(msg, dict):
+                    continue
+
+                role = msg.get("role")
+                if role not in {"user", "assistant", "system"}:
+                    continue
+
+                text = _extract_text(msg.get("content"))
+                if not text:
+                    continue
+
+                timestamp = row.get("timestamp") or msg.get("timestamp")
+                if isinstance(timestamp, (int, float)):
+                    timestamp = datetime.fromtimestamp(
+                        float(timestamp) / (1000.0 if float(timestamp) > 1e12 else 1.0),
+                        tz=timezone.utc,
+                    ).isoformat()
+                if not isinstance(timestamp, str):
+                    timestamp = ""
+
+                messages.append(
+                    {
+                        "role": role,
+                        "content": text,
+                        "timestamp": timestamp,
+                    }
+                )
+    except Exception:
+        return []
+
+    if limit > 0:
+        messages = messages[-limit:]
+    return messages
