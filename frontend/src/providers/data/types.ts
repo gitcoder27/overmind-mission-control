@@ -17,6 +17,7 @@ import type {
   ManagerMessageRequest,
   ManagerMessageResult,
   ManagerSessionResult,
+  OrchestratorRestartResult,
 } from '@/types/domain';
 
 export interface ProviderCapabilities {
@@ -27,6 +28,7 @@ export interface ProviderCapabilities {
   setProjectStatus: boolean;
   pauseOrchestrator: boolean;
   resumeOrchestrator: boolean;
+  restartOrchestrator: boolean;
   cronActions: boolean;
   controlIntake: boolean;
   controlChat: boolean;
@@ -65,6 +67,7 @@ export interface DataProvider {
   setProjectStatus(id: string, status: string, reason?: string): Promise<void>;
   pauseOrchestrator(): Promise<void>;
   resumeOrchestrator(): Promise<void>;
+  restartOrchestrator(): Promise<OrchestratorRestartResult>;
   enableCronJob(id: string): Promise<void>;
   disableCronJob(id: string): Promise<void>;
   runCronJob(id: string): Promise<void>;

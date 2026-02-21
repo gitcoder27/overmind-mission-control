@@ -78,15 +78,15 @@ export function useManagerChat(sessionKey: string) {
       return { prev };
     },
     onSuccess: (data) => {
-      // Append assistant response
-      const assistantMsg: ManagerChatMessage = {
-        role: 'assistant',
-        content: data.response,
+      // Append all assistant messages from the response
+      const newMessages: ManagerChatMessage[] = data.messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
         timestamp: new Date().toISOString(),
-      };
+      }));
       queryClient.setQueryData<ManagerChatMessage[]>(
         queryKeys.managerSession(sessionKey),
-        (old) => [...(old || []), assistantMsg],
+        (old) => [...(old || []), ...newMessages],
       );
     },
     onError: (err, _message, context) => {

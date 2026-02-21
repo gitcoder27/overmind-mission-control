@@ -330,6 +330,11 @@ export interface OrchestratorStatus {
   uptimeSeconds: number | null;
 }
 
+export interface OrchestratorRestartResult {
+  restarted: boolean;
+  output: string;
+}
+
 export interface HealthComponent {
   name: string;
   status: 'healthy' | 'degraded' | 'unhealthy';
@@ -417,10 +422,11 @@ export interface ManagerMessageRequest {
 }
 
 export interface ManagerMessageResult {
-  response: string;
+  messages: { role: 'assistant'; content: string }[];
   sessionKey: string;
   model: string | null;
   usage: Record<string, number> | null;
+  raw?: unknown;
 }
 
 export interface ManagerChatMessage {

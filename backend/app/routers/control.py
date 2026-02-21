@@ -6,11 +6,12 @@ Mission Control dashboard can drive workflows without Telegram.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.models.responses import success, error, cli_error_status_code
@@ -20,6 +21,7 @@ from app.services.overmind import (
 )
 from app.services.openclaw import (
     manager_send_message as oc_manager_send,
+    manager_stream_message as oc_manager_stream,
     manager_session_history as oc_manager_history,
     CliError,
 )
@@ -43,6 +45,12 @@ class ManagerMessageBody(BaseModel):
     """Request body for sending a message to the coordinator."""
     sessionKey: str = Field(..., min_length=1, max_length=200)
     message: str = Field(..., min_length=1, max_length=10000)
+
+
+def _sse_frame(event: str, data: dict) -> str:
+    """Build a single SSE frame with a compact JSON payload."""
+    payload = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
 # ─── Project Intake ──────────────────────────────────────────────
@@ -84,6 +92,58 @@ async def create_project(body: ProjectIntakeBody):
 
 # ─── Manager Chat ────────────────────────────────────────────────
 
+@router.post("/manager/stream")
+async def stream_manager_message(body: ManagerMessageBody):
+    """Stream manager responses from Gateway as SSE frames."""
+    logger.info(
+        "Control: manager stream — session=%s len=%d",
+        body.sessionKey,
+        len(body.message),
+    )
+
+    async def _event_stream():
+        try:
+            async for item in oc_manager_stream(
+                session_key=body.sessionKey,
+                message=body.message,
+            ):
+                event_name = str(item.get("event", "delta"))
+                payload = item.get("data", {})
+                if not isinstance(payload, dict):
+                    payload = {"value": payload}
+                yield _sse_frame(event_name, payload)
+        except CliError as exc:
+            logger.warning("Control: manager stream failed — %s", exc.message)
+            yield _sse_frame(
+                "error",
+                {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "details": exc.details,
+                },
+            )
+        except Exception as exc:
+            logger.exception("Control: unexpected manager stream error")
+            yield _sse_frame(
+                "error",
+                {
+                    "code": "MANAGER_STREAM_ERROR",
+                    "message": str(exc),
+                    "details": {},
+                },
+            )
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/manager/message")
 async def send_manager_message(body: ManagerMessageBody):
     """Send a user message to overmind-coordinator and return the response.
@@ -101,15 +161,33 @@ async def send_manager_message(body: ManagerMessageBody):
             session_key=body.sessionKey,
             message=body.message,
         )
-        # Normalise response shape
-        response_text = ""
+        # Normalise response shape - extract ALL messages from OpenClaw result structure
+        messages = []
         if isinstance(result, dict):
-            response_text = result.get("response", result.get("content", result.get("text", "")))
-        elif isinstance(result, str):
-            response_text = result
+            raw = result.get("raw", result)
+            if isinstance(raw, dict):
+                result_data = raw.get("result", {})
+                if isinstance(result_data, dict):
+                    payloads = result_data.get("payloads", [])
+                    for payload in payloads:
+                        if isinstance(payload, dict) and payload.get("text"):
+                            messages.append({
+                                "role": "assistant",
+                                "content": payload["text"],
+                            })
+        
+        # Fallback: if no messages extracted, try legacy fields
+        if not messages:
+            response_text = ""
+            if isinstance(result, dict):
+                response_text = result.get("response", result.get("content", result.get("text", "")))
+            elif isinstance(result, str):
+                response_text = result
+            if response_text:
+                messages.append({"role": "assistant", "content": response_text})
 
         return success({
-            "response": response_text,
+            "messages": messages,
             "sessionKey": body.sessionKey,
             "model": result.get("model") if isinstance(result, dict) else None,
             "usage": result.get("usage") if isinstance(result, dict) else None,

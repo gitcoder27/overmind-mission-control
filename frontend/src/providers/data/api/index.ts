@@ -18,6 +18,7 @@ import type {
   ManagerMessageRequest,
   ManagerMessageResult,
   ManagerSessionResult,
+  OrchestratorRestartResult,
 } from '@/types/domain';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -31,6 +32,7 @@ const capabilities: ProviderCapabilities = {
   setProjectStatus: true,
   pauseOrchestrator: true,
   resumeOrchestrator: true,
+  restartOrchestrator: true,
   cronActions: true,
 };
 
@@ -164,6 +166,10 @@ export function createApiProvider(): DataProvider {
 
     async resumeOrchestrator() {
       await apiFetch('/system/orchestrator/resume', { method: 'POST' });
+    },
+
+    async restartOrchestrator() {
+      return apiFetch<OrchestratorRestartResult>('/system/orchestrator/restart', { method: 'POST' });
     },
 
     async enableCronJob(id) {

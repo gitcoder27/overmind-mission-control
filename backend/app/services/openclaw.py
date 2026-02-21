@@ -18,8 +18,12 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from app.config import OPENCLAW_CLI, CLI_STATUS_TIMEOUT, CLI_MUTATION_TIMEOUT, OPENCLAW_ROOT
 from app.services.cache import cli_cache
@@ -345,6 +349,9 @@ async def cron_run(job_id: str) -> str:
 # ─── Manager / Coordinator Commands ─────────────────────────────
 
 _MANAGER_TURN_TIMEOUT = 60  # coordinator responses can be slow
+_GATEWAY_STREAM_CONNECT_TIMEOUT = 10.0
+_GATEWAY_STREAM_WRITE_TIMEOUT = 30.0
+_GATEWAY_DEFAULT_PORT = 18789
 
 async def manager_send_message(
     session_key: str,
@@ -361,9 +368,9 @@ async def manager_send_message(
     def _run():
         return _run_openclaw_sync(
             [
-                "agent", "turn",
+                "agent",
                 "--agent", agent_id,
-                "--session", session_key,
+                "--session-id", session_key,
                 "--message", message,
                 "--json",
             ],
@@ -374,30 +381,327 @@ async def manager_send_message(
     return _parse_json(raw, "manager turn")
 
 
+def _gateway_http_base_url() -> tuple[str, str | None]:
+    """Resolve Gateway base URL + auth token from ``~/.openclaw/openclaw.json``.
+
+    Falls back to loopback with the default gateway port when the config is
+    missing fields.
+    """
+    cfg: dict[str, Any] = {}
+    config_path = Path.home() / ".openclaw" / "openclaw.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_cfg = json.load(f)
+            if isinstance(raw_cfg, dict):
+                cfg = raw_cfg
+        except Exception as exc:
+            logger.warning("openclaw: failed to read %s (%s)", config_path, exc)
+
+    gateway_cfg = cfg.get("gateway") if isinstance(cfg.get("gateway"), dict) else {}
+
+    # Optional explicit URL support (convert WS schemes to HTTP for REST calls).
+    raw_url = ""
+    if isinstance(gateway_cfg, dict):
+        value = gateway_cfg.get("url")
+        if isinstance(value, str):
+            raw_url = value.strip()
+
+    if raw_url:
+        if raw_url.startswith("ws://"):
+            raw_url = "http://" + raw_url[5:]
+        elif raw_url.startswith("wss://"):
+            raw_url = "https://" + raw_url[6:]
+        base_url = raw_url.rstrip("/")
+    else:
+        port_value = gateway_cfg.get("port") if isinstance(gateway_cfg, dict) else None
+        try:
+            port = int(port_value) if port_value is not None else _GATEWAY_DEFAULT_PORT
+        except (TypeError, ValueError):
+            port = _GATEWAY_DEFAULT_PORT
+        base_url = f"http://127.0.0.1:{port}"
+
+    token: str | None = None
+    auth_cfg = gateway_cfg.get("auth") if isinstance(gateway_cfg, dict) else None
+    if isinstance(auth_cfg, dict):
+        token_value = auth_cfg.get("token")
+        if isinstance(token_value, str) and token_value.strip():
+            token = token_value.strip()
+
+    return base_url, token
+
+
+def _extract_output_index(payload: dict[str, Any]) -> int:
+    """Best-effort output index extraction from OpenResponses stream payloads."""
+    for key in ("output_index", "outputIndex", "item_index", "itemIndex"):
+        value = payload.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+
+    item = payload.get("item")
+    if isinstance(item, dict):
+        for key in ("output_index", "outputIndex", "index"):
+            value = item.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+    return 0
+
+
+def _extract_delta_text(payload: dict[str, Any]) -> str | None:
+    """Extract incremental assistant text from known stream payload shapes."""
+    value = payload.get("delta")
+    if isinstance(value, str) and value:
+        return value
+
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            delta = first.get("delta")
+            if isinstance(delta, dict):
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    return content
+                if isinstance(content, list):
+                    parts: list[str] = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            text = part.get("text")
+                            if isinstance(text, str) and text:
+                                parts.append(text)
+                    if parts:
+                        return "".join(parts)
+    return None
+
+
+def _extract_output_item_text(payload: dict[str, Any]) -> str | None:
+    """Extract full output text from ``response.output_item.done`` style payloads."""
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return None
+
+    if isinstance(item.get("text"), str) and item.get("text"):
+        return item["text"]
+
+    content = item.get("content")
+    if not isinstance(content, list):
+        return None
+
+    parts: list[str] = []
+    for part in content:
+        if isinstance(part, dict):
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    if parts:
+        return "".join(parts)
+    return None
+
+
+def _extract_error_message(payload: Any) -> str:
+    """Extract a readable error message from gateway error payloads."""
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        for key in ("message", "detail", "error"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()
+    return "Gateway stream error"
+
+
+async def manager_stream_message(
+    session_key: str,
+    message: str,
+    agent_id: str = "overmind-coordinator",
+) -> AsyncIterator[dict[str, Any]]:
+    """Stream manager responses from Gateway OpenResponses SSE.
+
+    Yields normalized events:
+      - ``{"event": "delta", "data": {"delta", "outputIndex", "sessionKey"}}``
+      - ``{"event": "done", "data": {"sessionKey"}}``
+      - ``{"event": "error", "data": {"message", "code", "details"}}``
+    """
+    base_url, token = _gateway_http_base_url()
+    endpoint = f"{base_url}/v1/responses"
+    payload = {
+        "agentId": agent_id,
+        "sessionKey": session_key,
+        "input": message,
+        "stream": True,
+    }
+    headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    timeout = httpx.Timeout(
+        connect=_GATEWAY_STREAM_CONNECT_TIMEOUT,
+        write=_GATEWAY_STREAM_WRITE_TIMEOUT,
+        read=None,
+        pool=30.0,
+    )
+
+    seen_done = False
+    emitted_delta_indexes: set[int] = set()
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", endpoint, json=payload, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", errors="ignore")
+                    raise CliError(
+                        code="OPENCLAW_GATEWAY_ERROR",
+                        message=f"Gateway /v1/responses returned HTTP {resp.status_code}",
+                        details={"status_code": resp.status_code, "body": body[:1000]},
+                    )
+
+                frame_event = "message"
+                data_lines: list[str] = []
+
+                async def _emit_frame(
+                    event_name: str,
+                    lines: list[str],
+                ) -> AsyncIterator[dict[str, Any]]:
+                    nonlocal seen_done
+                    if not lines:
+                        return
+
+                    data_raw = "\n".join(lines).strip()
+                    if not data_raw:
+                        return
+
+                    if data_raw == "[DONE]":
+                        seen_done = True
+                        yield {"event": "done", "data": {"sessionKey": session_key}}
+                        return
+
+                    try:
+                        parsed = json.loads(data_raw)
+                    except json.JSONDecodeError:
+                        # Ignore non-JSON payload frames.
+                        return
+
+                    effective_event = event_name
+                    if (
+                        effective_event in ("", "message")
+                        and isinstance(parsed, dict)
+                        and isinstance(parsed.get("type"), str)
+                    ):
+                        effective_event = parsed["type"]
+
+                    event_lower = effective_event.lower()
+                    if event_lower in {"done", "response.completed", "completed"}:
+                        seen_done = True
+                        yield {
+                            "event": "done",
+                            "data": {"sessionKey": session_key, "raw": parsed},
+                        }
+                        return
+
+                    if event_lower in {"error", "response.failed"} or event_lower.endswith(".failed"):
+                        yield {
+                            "event": "error",
+                            "data": {
+                                "code": "OPENCLAW_GATEWAY_STREAM_ERROR",
+                                "message": _extract_error_message(parsed),
+                                "details": parsed if isinstance(parsed, dict) else {},
+                            },
+                        }
+                        return
+
+                    if not isinstance(parsed, dict):
+                        return
+
+                    delta = _extract_delta_text(parsed)
+                    if isinstance(delta, str) and delta:
+                        output_index = _extract_output_index(parsed)
+                        emitted_delta_indexes.add(output_index)
+                        yield {
+                            "event": "delta",
+                            "data": {
+                                "delta": delta,
+                                "outputIndex": output_index,
+                                "sessionKey": session_key,
+                            },
+                        }
+                        return
+
+                    # Some implementations only emit final output item text.
+                    if event_lower in {"response.output_item.done", "output_item.done"}:
+                        output_index = _extract_output_index(parsed)
+                        if output_index in emitted_delta_indexes:
+                            return
+                        full_text = _extract_output_item_text(parsed)
+                        if full_text:
+                            emitted_delta_indexes.add(output_index)
+                            yield {
+                                "event": "delta",
+                                "data": {
+                                    "delta": full_text,
+                                    "outputIndex": output_index,
+                                    "sessionKey": session_key,
+                                },
+                            }
+
+                async for line in resp.aiter_lines():
+                    if line == "":
+                        async for event in _emit_frame(frame_event, data_lines):
+                            yield event
+                        frame_event = "message"
+                        data_lines = []
+                        continue
+
+                    if line.startswith(":"):
+                        continue
+                    if line.startswith("event:"):
+                        frame_event = line[6:].strip() or "message"
+                        continue
+                    if line.startswith("data:"):
+                        data_lines.append(line[5:].lstrip())
+
+                # Flush any trailing frame not terminated with a blank line.
+                async for event in _emit_frame(frame_event, data_lines):
+                    yield event
+
+    except httpx.TimeoutException as exc:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_TIMEOUT",
+            message="Timed out while connecting to OpenClaw Gateway stream",
+            details={"error": str(exc)},
+        )
+    except httpx.RequestError as exc:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_UNREACHABLE",
+            message="Failed to reach OpenClaw Gateway stream endpoint",
+            details={"error": str(exc)},
+        )
+
+    if not seen_done:
+        yield {"event": "done", "data": {"sessionKey": session_key}}
+
+
 async def manager_session_history(
     session_key: str,
     agent_id: str = "overmind-coordinator",
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Retrieve recent messages for a manager session (cached briefly)."""
-    cache_key = f"oc:manager_session:{agent_id}:{session_key}"
-
-    async def _fetch():
-        raw = await _run_openclaw_async(
-            [
-                "agent", "session-history",
-                "--agent", agent_id,
-                "--session", session_key,
-                "--limit", str(limit),
-                "--json",
-            ]
-        )
-        data = _parse_json(raw, "session history")
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("messages", data.get("items", []))
-        return []
-
-    result = await cli_cache.get_or_fetch(cache_key, _fetch, ttl=5.0)
-    return result
+    """Retrieve recent messages for a manager session.
+    
+    Note: Session history is not available via CLI. The frontend should
+    maintain local state or use the Gateway WebSocket for real-time updates.
+    """
+    # CLI does not support session-history; return empty for now.
+    # Consider using Gateway WebSocket or maintaining local chat state.
+    return []

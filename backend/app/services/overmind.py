@@ -168,6 +168,71 @@ async def project_create(
     return _parse_json(raw, "project create")
 
 
+async def orchestrator_restart() -> dict[str, Any]:
+    """Restart the orchestrator via framework restart script.
+
+    Uses scripts/restart_framework.sh which handles:
+    1. Preflight (config validate + db migrate)
+    2. Graceful stop of existing orchestrator
+    3. Start of new orchestrator process
+
+    Implementation note: The start script spawns the orchestrator as a
+    background daemon (``nohup ... &``).  When we capture stdout/stderr via
+    ``PIPE``, the daemon inherits the pipe file descriptors.  Even though
+    its own output is redirected to a log file, the inherited FDs keep the
+    pipe open, so ``proc.communicate()`` blocks forever waiting for EOF.
+
+    Fix: we write script output to temporary files instead of using PIPE,
+    and impose a timeout so we never block indefinitely.
+    """
+    import asyncio
+    import tempfile
+    from app.config import OVERMIND_ROOT
+
+    RESTART_TIMEOUT = 60  # seconds – generous limit for preflight + stop + start
+
+    script_path = OVERMIND_ROOT / "scripts" / "restart_framework.sh"
+    if not script_path.exists():
+        raise OvmCliError(
+            code="RESTART_SCRIPT_NOT_FOUND",
+            message=f"Restart script not found: {script_path}",
+        )
+
+    # Use temp files for stdout/stderr so the background daemon's inherited
+    # FDs don't hold PIPE open and block communicate().
+    with tempfile.TemporaryFile() as tmp_out, tempfile.TemporaryFile() as tmp_err:
+        proc = await asyncio.create_subprocess_exec(
+            str(script_path),
+            stdout=tmp_out,
+            stderr=tmp_err,
+            cwd=str(OVERMIND_ROOT),
+            start_new_session=True,
+        )
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=RESTART_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise OvmCliError(
+                code="ORCHESTRATOR_RESTART_TIMEOUT",
+                message=f"Restart script timed out after {RESTART_TIMEOUT}s",
+            )
+
+        tmp_out.seek(0)
+        tmp_err.seek(0)
+        stdout_str = tmp_out.read().decode("utf-8", errors="replace")
+        stderr_str = tmp_err.read().decode("utf-8", errors="replace")
+
+    if proc.returncode != 0:
+        raise OvmCliError(
+            code="ORCHESTRATOR_RESTART_FAILED",
+            message=f"Orchestrator restart failed: {stderr_str or stdout_str}",
+            details={"returncode": proc.returncode, "stdout": stdout_str, "stderr": stderr_str},
+        )
+
+    return {"restarted": True, "output": stdout_str}
+
+
 async def orchestrator_pause() -> str:
     """Pause the orchestrator."""
     return await _run_ovm(["orchestrator", "pause"], timeout=CLI_MUTATION_TIMEOUT)

@@ -151,6 +151,35 @@ export function useResumeOrchestrator() {
   });
 }
 
+export function useRestartOrchestrator() {
+  const provider = useDataProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const confirmed = await confirm({
+        title: 'Restart orchestrator?',
+        message: 'Are you sure? This will stop and restart the orchestrator. Running attempts will continue but no new tasks will be processed during the restart.',
+        confirmLabel: 'Restart',
+        variant: 'danger',
+      });
+      if (!confirmed) throw new Error('Cancelled');
+      return provider.restartOrchestrator();
+    },
+    onError: (_err) => {
+      if (_err instanceof Error && _err.message === 'Cancelled') return;
+      toast('error', 'Restart failed', _err instanceof Error ? _err.message : 'Unknown error');
+    },
+    onSuccess: () => {
+      toast('success', 'Orchestrator restarted');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.snapshot });
+      queryClient.invalidateQueries({ queryKey: queryKeys.systemHealth });
+    },
+  });
+}
+
 // ────────────────────────────────────────────────────
 // Cron mutations
 // ────────────────────────────────────────────────────

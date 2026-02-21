@@ -11,6 +11,7 @@ from app.services.cache import cli_cache, snapshot_cache
 from app.services.overmind import (
     orchestrator_pause as ovm_pause,
     orchestrator_resume as ovm_resume,
+    orchestrator_restart as ovm_restart,
     OvmCliError,
 )
 
@@ -49,6 +50,21 @@ async def orchestrator_resume():
     try:
         await ovm_resume()
         return success({"paused": False})
+    except OvmCliError as exc:
+        sc = cli_error_status_code(exc.code, exc.message)
+        body, _ = error(exc.code, exc.message, exc.details, sc)
+        return JSONResponse(content=body, status_code=sc)
+
+
+@router.post("/orchestrator/restart")
+async def orchestrator_restart():
+    """Restart the orchestrator via framework restart script.
+
+    Runs preflight checks, stops existing orchestrator, and starts fresh.
+    """
+    try:
+        result = await ovm_restart()
+        return success({"restarted": True, "output": result.get("output", "")})
     except OvmCliError as exc:
         sc = cli_error_status_code(exc.code, exc.message)
         body, _ = error(exc.code, exc.message, exc.details, sc)

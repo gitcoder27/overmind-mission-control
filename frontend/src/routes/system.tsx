@@ -1,14 +1,13 @@
 import { useSystemHealth, useSnapshot } from '@/queries/useSnapshot';
-import { usePauseOrchestrator, useResumeOrchestrator } from '@/queries/useMutations';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { HealthPill } from '@/components/ui/HealthPill';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JsonInspector } from '@/components/ui/JsonInspector';
-import { TimeAgo } from '@/components/ui/TimeAgo';
+import { OrchestratorControls } from '@/components/OrchestratorControls';
 import { useUiStore } from '@/stores/uiStore';
 import { useDataProvider } from '@/providers/data';
-import { cn, formatDuration } from '@/lib/utils';
-import { Server, Database, Wifi, Cpu, Play, Pause, Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Server, Database, Wifi, Cpu } from 'lucide-react';
 
 const componentIcons: Record<string, typeof Server> = {
   'API Server': Server,
@@ -22,8 +21,6 @@ export function SystemPage() {
   const { data: snapshot } = useSnapshot();
   const connectionStatus = useUiStore((s) => s.connectionStatus);
   const provider = useDataProvider();
-  const pauseMutation = usePauseOrchestrator();
-  const resumeMutation = useResumeOrchestrator();
 
   if (healthLoading) {
     return (
@@ -80,67 +77,7 @@ export function SystemPage() {
       </div>
 
       {/* Orchestrator control */}
-      {snapshot?.orchestrator && (
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold">Orchestrator</h3>
-            {provider.capabilities.pauseOrchestrator && (
-              <div className="flex items-center gap-2">
-                <button
-                  disabled={pauseMutation.isPending}
-                  onClick={() => pauseMutation.mutate()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-warn-dim px-2.5 py-1 text-[11px] font-medium text-warn hover:bg-warn/20 transition-colors disabled:opacity-50"
-                >
-                  {pauseMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pause className="h-3 w-3" />} Pause
-                </button>
-                <button
-                  disabled={resumeMutation.isPending}
-                  onClick={() => resumeMutation.mutate()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-accent-dim px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
-                >
-                  {resumeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Resume
-                </button>
-              </div>
-            )}
-          </div>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs md:grid-cols-4">
-            <div>
-              <dt className="text-text-muted">Status</dt>
-              <dd className={snapshot.orchestrator.running ? 'text-accent' : 'text-danger'}>
-                {snapshot.orchestrator.running ? 'Running' : 'Stopped'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">PID</dt>
-              <dd className="font-mono">{snapshot.orchestrator.pid || '---'}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Cursor</dt>
-              <dd className="font-mono">{snapshot.orchestrator.cursorPosition}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Cursor Lag</dt>
-              <dd className={cn('font-mono', snapshot.orchestrator.cursorLag > 10 && 'text-warn')}>
-                {snapshot.orchestrator.cursorLag}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Last Heartbeat</dt>
-              <dd>{snapshot.orchestrator.lastHeartbeat ? <TimeAgo date={snapshot.orchestrator.lastHeartbeat} /> : '---'}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Uptime</dt>
-              <dd>{snapshot.orchestrator.uptimeSeconds ? formatDuration(snapshot.orchestrator.uptimeSeconds) : '---'}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Stagnant</dt>
-              <dd className={snapshot.orchestrator.stagnant ? 'text-danger' : 'text-accent'}>
-                {snapshot.orchestrator.stagnant ? 'Yes' : 'No'}
-              </dd>
-            </div>
-          </dl>
-        </div>
-      )}
+      <OrchestratorControls />
 
       {/* Diagnostics */}
       <div className="rounded-xl border border-border bg-surface p-4">
