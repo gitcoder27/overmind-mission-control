@@ -3,6 +3,7 @@ import type {
   SystemSnapshot,
   Project,
   Task,
+  Attempt,
   EventItem,
   Agent,
   AgentFileInfo,
@@ -91,6 +92,10 @@ export function createApiProvider(): DataProvider {
 
     async getProjectTasks(id) {
       return apiFetch<Task[]>(`/projects/${id}/tasks`);
+    },
+
+    async getProjectAttempts(id) {
+      return apiFetch<Attempt[]>(`/projects/${id}/attempts`);
     },
 
     async getEvents(filters) {

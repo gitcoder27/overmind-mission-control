@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useProject, useProjectTasks, useEvents, useProjectAttempts, useAgents } from '@/queries/useSnapshot';
 import { useApproveProject, useRequestChanges, useSetProjectStatus } from '@/queries/useMutations';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -14,11 +14,98 @@ import type { Column } from '@/components/ui/DataTable';
 import type { Task, Attempt } from '@/types/domain';
 import { progressPercent, getAgentRoleIcon, shortId, formatDuration, cn } from '@/lib/utils';
 import { useDataProvider } from '@/providers/data';
-import { ArrowLeft, CheckCircle, XCircle, RotateCcw, Archive, Play, AlertTriangle, Loader2, ClipboardList, LayoutGrid, List, Network } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, RotateCcw, Archive, Play, AlertTriangle, Loader2, ClipboardList, LayoutGrid, List, Network, X, Copy, Check } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 
 type ViewMode = 'board' | 'table' | 'topology';
 const VIEW_PREF_KEY = 'overmind_project_tasks_view';
+
+/* ── Error Popover ─────────────────────────────────────── */
+
+function ErrorPopover({ message }: { message: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const popRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') close();
+    }
+    function onClick(e: MouseEvent) {
+      if (
+        popRef.current && !popRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
+        close();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onClick);
+    };
+  }, [open, close]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(message).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [message]);
+
+  return (
+    <span className="relative">
+      <button
+        ref={triggerRef}
+        onClick={() => setOpen((p) => !p)}
+        className="group flex items-center gap-1.5 text-[11px] text-danger hover:text-danger/80 transition-colors cursor-pointer text-left"
+      >
+        <span className="truncate block max-w-[160px]">{message}</span>
+        <span className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] text-danger/50">view</span>
+      </button>
+
+      {open && (
+        <div
+          ref={popRef}
+          className="absolute right-0 top-full mt-1.5 z-50 w-[380px] max-w-[90vw] animate-fade-in"
+        >
+          <div className="rounded-xl border border-danger/20 bg-surface-elevated shadow-2xl glow-danger">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-danger/10 px-3.5 py-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-danger/70">Error Details</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleCopy}
+                  className="rounded-md p-1 text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                  title="Copy error message"
+                >
+                  {copied ? <Check className="h-3 w-3 text-accent" /> : <Copy className="h-3 w-3" />}
+                </button>
+                <button
+                  onClick={close}
+                  className="rounded-md p-1 text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            {/* Body */}
+            <div className="px-3.5 py-3 max-h-48 overflow-y-auto">
+              <p className="text-xs leading-relaxed text-text-primary whitespace-pre-wrap break-words font-mono">
+                {message}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
 
 interface ProjectDetailPageProps {
   projectId: string;
@@ -28,7 +115,7 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
   const { data: project, isLoading: projLoading, error: projError, refetch: refetchProject } = useProject(projectId);
   const { data: tasks, isLoading: tasksLoading, error: tasksError, refetch: refetchTasks } = useProjectTasks(projectId);
   const { data: events, isLoading: eventsLoading, error: eventsError, refetch: refetchEvents } = useEvents({ project_id: projectId });
-  const attempts = useProjectAttempts(projectId);
+  const { data: attempts = [], isLoading: attemptsLoading, error: attemptsError, refetch: refetchAttempts } = useProjectAttempts(projectId);
   const { data: agents } = useAgents();
   const provider = useDataProvider();
   const navigate = useNavigate();
@@ -168,7 +255,7 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
       header: 'Error',
       width: 'w-40',
       render: (a) => a.errorMessage
-        ? <span className="text-[11px] text-danger truncate block max-w-[160px]" title={a.errorMessage}>{a.errorMessage}</span>
+        ? <ErrorPopover message={a.errorMessage} />
         : <span className="text-xs text-text-muted">---</span>,
     },
   ];
@@ -349,24 +436,32 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
         )}
       </div>
 
-      {/* Attempt History */}
+      {/* Agent Activity History */}
       <div className="rounded-xl border border-border bg-surface overflow-hidden">
         <div className="border-b border-border px-4 py-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Attempt History</h3>
+          <h3 className="text-sm font-semibold">Agent Activity History</h3>
           <span className="text-[11px] text-text-muted">{attempts.length} attempts</span>
         </div>
-        {attempts.length === 0 ? (
+        {attemptsLoading ? (
+          <div className="p-4 space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          </div>
+        ) : attemptsError ? (
+          <ErrorState message={attemptsError.message} onRetry={() => refetchAttempts()} />
+        ) : attempts.length === 0 ? (
           <EmptyState
             icon={<RotateCcw className="h-8 w-8" />}
             title="No attempts recorded"
-            description="Attempt history will appear here as the orchestrator processes tasks."
+            description="Agent activity history will appear here as the orchestrator processes tasks."
           />
         ) : (
-          <DataTable
-            columns={attemptColumns}
-            data={attempts}
-            keyExtractor={(a) => a.id}
-          />
+          <div className="max-h-96 overflow-y-auto">
+            <DataTable
+              columns={attemptColumns}
+              data={attempts}
+              keyExtractor={(a) => a.id}
+            />
+          </div>
         )}
       </div>
 

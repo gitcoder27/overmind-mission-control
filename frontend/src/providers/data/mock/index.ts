@@ -63,6 +63,14 @@ export function createMockProvider(): DataProvider {
       return mockTasks.filter((t) => t.projectId === id);
     },
 
+    async getProjectAttempts(id) {
+      await delay(80);
+      const projectTasks = mockTasks.filter((t) => t.projectId === id);
+      return projectTasks
+        .filter((t) => t.latestAttempt)
+        .map((t) => t.latestAttempt!);
+    },
+
     async getEvents(filters) {
       await delay(60);
       let result = [...mockEvents];

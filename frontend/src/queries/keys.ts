@@ -3,6 +3,7 @@ export const queryKeys = {
   projects: (filters?: Record<string, string>) => ['projects', filters] as const,
   project: (id: string) => ['project', id] as const,
   projectTasks: (id: string) => ['project', id, 'tasks'] as const,
+  projectAttempts: (id: string) => ['project', id, 'attempts'] as const,
   events: (filters?: Record<string, string>) => ['events', filters] as const,
   agents: ['agents'] as const,
   agent: (id: string) => ['agent', id] as const,

@@ -2,6 +2,7 @@ import type {
   SystemSnapshot,
   Project,
   Task,
+  Attempt,
   EventItem,
   Agent,
   AgentFileInfo,
@@ -44,6 +45,7 @@ export interface DataProvider {
   getProjects(filters?: Record<string, string>): Promise<Project[]>;
   getProject(id: string): Promise<Project>;
   getProjectTasks(id: string): Promise<Task[]>;
+  getProjectAttempts(id: string): Promise<Attempt[]>;
   getEvents(filters?: Record<string, string>): Promise<EventItem[]>;
   getAgents(): Promise<Agent[]>;
   getAgent(id: string): Promise<Agent>;

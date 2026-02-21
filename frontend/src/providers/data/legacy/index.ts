@@ -387,6 +387,19 @@ export function createLegacyProvider(): DataProvider {
       return [];
     },
 
+    async getProjectAttempts(projectId: string): Promise<Attempt[]> {
+      // Legacy has no dedicated attempts endpoint; derive from tasks
+      const tasks = await this.getProjectTasks(projectId);
+      return tasks
+        .filter((t) => t.latestAttempt)
+        .map((t) => t.latestAttempt!)
+        .sort((a, b) => {
+          const da = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+          const db = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+          return db - da;
+        });
+    },
+
     async getEvents(filters?: Record<string, string>): Promise<EventItem[]> {
       const raw = await fetchLegacySnapshot();
       const eventsSource = Array.isArray(raw.events_readable)

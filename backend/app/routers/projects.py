@@ -77,6 +77,15 @@ ORDER BY ta.attempt_no DESC
 LIMIT 1
 """
 
+ALL_ATTEMPTS_FOR_PROJECT_SQL = """
+SELECT ta.*, t.title AS task_title, t.project_id, p.goal AS project_goal
+FROM task_attempts ta
+JOIN tasks t ON ta.task_id = t.id
+JOIN projects p ON t.project_id = p.id
+WHERE t.project_id = ?
+ORDER BY ta.started_at DESC, ta.attempt_no DESC
+"""
+
 
 # ─── Request bodies ──────────────────────────────────────────────
 
@@ -171,6 +180,19 @@ async def get_project_tasks(project_id: str):
         }
         tasks.append(task)
     return success(tasks)
+
+
+@router.get("/{project_id}/attempts")
+async def get_project_attempts(project_id: str):
+    """Get all attempts (agent activity history) for a project."""
+    project_row = fetch_one("SELECT id FROM projects WHERE id = ?", (project_id,))
+    if not project_row:
+        body, sc = error("NOT_FOUND", f"Project {project_id} not found", status=404)
+        return JSONResponse(content=body, status_code=sc)
+
+    rows = fetch_all(ALL_ATTEMPTS_FOR_PROJECT_SQL, (project_id,))
+    attempts = [_attempt_from_row(r).model_dump() for r in rows]
+    return success(attempts)
 
 
 # ─── Mutations ─────────────────────────────────────────────────

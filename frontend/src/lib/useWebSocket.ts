@@ -128,12 +128,14 @@ function invalidateByEventType(
     case 'ATTEMPT_COMPLETED':
       queryClient.invalidateQueries({ queryKey: queryKeys.snapshot });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
       break;
 
     case 'TASK_UPDATE':
       queryClient.invalidateQueries({ queryKey: queryKeys.snapshot });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project'] });
       break;
 
     case 'AGENT_UPDATE':
@@ -143,6 +145,7 @@ function invalidateByEventType(
     case 'PROJECT_TRANSITION':
       queryClient.invalidateQueries({ queryKey: queryKeys.snapshot });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project'] });
       break;
 
     case 'ALERT_TRIGGERED':

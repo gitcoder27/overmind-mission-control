@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from './keys';
 import { useDataProvider } from '@/providers/data';
-import type { Attempt } from '@/types/domain';
 
 export function useSnapshot() {
   const provider = useDataProvider();
@@ -41,41 +40,17 @@ export function useProjectTasks(id: string) {
 }
 
 /**
- * Derives attempt history for a project from the snapshot's running attempts
- * and any attempt data returned by the provider. This avoids needing a separate
- * endpoint while still surfacing attempt history in the project detail view.
+ * Fetches the complete attempt (agent activity) history for a project.
+ * Uses the dedicated /projects/:id/attempts endpoint that returns ALL
+ * attempts across all tasks, not just the latest per task.
  */
 export function useProjectAttempts(projectId: string) {
-  const { data: snapshot } = useSnapshot();
-  const { data: tasks } = useProjectTasks(projectId);
-
-  // Collect all attempts mentioning this project from snapshot
-  const attempts: Attempt[] = [];
-
-  if (snapshot) {
-    // Running attempts for this project
-    snapshot.runningAttempts
-      .filter(a => a.projectId === projectId)
-      .forEach(a => attempts.push(a));
-  }
-
-  // Attempts embedded in tasks (latestAttempt)
-  if (tasks) {
-    tasks.forEach(t => {
-      if (t.latestAttempt && !attempts.some(a => a.id === t.latestAttempt!.id)) {
-        attempts.push(t.latestAttempt);
-      }
-    });
-  }
-
-  // Sort by startedAt descending
-  attempts.sort((a, b) => {
-    const da = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-    const db = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-    return db - da;
+  const provider = useDataProvider();
+  return useQuery({
+    queryKey: queryKeys.projectAttempts(projectId),
+    queryFn: () => provider.getProjectAttempts(projectId),
+    staleTime: 5000,
   });
-
-  return attempts;
 }
 
 export function useEvents(filters?: Record<string, string>) {
