@@ -42,6 +42,20 @@ body {
   color: var(--color-text-primary);
 }
 
+/* Ensure all interactive elements show pointer cursor */
+button,
+[role="button"],
+a,
+select,
+label[for],
+input[type="checkbox"],
+input[type="radio"],
+input[type="submit"],
+input[type="button"],
+summary {
+  cursor: pointer;
+}
+
 /* Subtle grid background */
 .bg-grid {
   background-image:

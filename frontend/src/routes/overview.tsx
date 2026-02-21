@@ -25,7 +25,7 @@ export function OverviewPage() {
     return (
       <div className="space-y-6 animate-fade-in">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">Command Center</h2>
+          <h2 className="text-lg font-bold">Overview</h2>
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6 stagger-children">
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -45,7 +45,7 @@ export function OverviewPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Command Center</h2>
+          <h2 className="text-lg font-bold">Overview</h2>
           <p className="text-xs text-text-muted mt-0.5">
             Real-time operational overview
           </p>
