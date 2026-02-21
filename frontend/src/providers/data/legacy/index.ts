@@ -461,6 +461,7 @@ export function createLegacyProvider(): DataProvider {
     async disableCronJob() { throw new Error('Not supported in legacy provider'); },
     async runCronJob() { throw new Error('Not supported in legacy provider'); },
     async createProject() { throw new Error('Not supported in legacy provider'); },
+    async streamManagerMessage() { throw new Error('Not supported in legacy provider'); },
     async sendManagerMessage() { throw new Error('Not supported in legacy provider'); },
     async getManagerSession() { throw new Error('Not supported in legacy provider'); },
   };

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -161,7 +159,9 @@ class TestManagerMessage:
         assert resp.status_code == 200
         body = resp.json()
         _assert_envelope(body, ok=True)
-        assert "look into that" in body["data"]["response"]
+        assert len(body["data"]["messages"]) == 1
+        assert body["data"]["messages"][0]["role"] == "assistant"
+        assert "look into that" in body["data"]["messages"][0]["content"]
         assert body["data"]["sessionKey"] == "dashboard:main"
         assert body["data"]["model"] == "claude-sonnet-4-20250514"
 
@@ -205,6 +205,67 @@ class TestManagerMessage:
             json={"sessionKey": "dashboard:main", "message": "Hello"},
         )
         assert resp.status_code == 504
+
+
+# ──────────────────────────────────────────────────────────────────
+# POST /control/manager/stream  — Manager Chat SSE
+# ──────────────────────────────────────────────────────────────────
+
+class TestManagerStream:
+    """Tests for streaming manager chat endpoint."""
+
+    def test_stream_success_delta_done(self):
+        """SSE stream emits incremental deltas and terminal done event."""
+        async def _fake_stream(**kwargs):
+            assert kwargs["session_key"] == "dashboard:control"
+            assert kwargs["message"] == "Status update?"
+            yield {
+                "event": "delta",
+                "data": {"delta": "Hello", "outputIndex": 0, "sessionKey": "dashboard:control"},
+            }
+            yield {
+                "event": "delta",
+                "data": {"delta": " world", "outputIndex": 0, "sessionKey": "dashboard:control"},
+            }
+            yield {"event": "done", "data": {"sessionKey": "dashboard:control"}}
+
+        with patch("app.routers.control.oc_manager_stream", new=_fake_stream):
+            with client.stream(
+                "POST",
+                "/api/v1/control/manager/stream",
+                json={"sessionKey": "dashboard:control", "message": "Status update?"},
+            ) as resp:
+                assert resp.status_code == 200
+                assert resp.headers["content-type"].startswith("text/event-stream")
+                raw = "".join(resp.iter_text())
+
+        assert "event: delta" in raw
+        assert "event: done" in raw
+        assert '"delta":"Hello"' in raw
+        assert '"delta":" world"' in raw
+
+    def test_stream_cli_error_maps_to_error_event(self):
+        """Gateway/CLI errors are serialized as SSE error events."""
+        async def _fake_stream(**_kwargs):
+            raise CliError(
+                code="OPENCLAW_GATEWAY_UNREACHABLE",
+                message="gateway offline",
+                details={"status": 503},
+            )
+            yield  # pragma: no cover
+
+        with patch("app.routers.control.oc_manager_stream", new=_fake_stream):
+            with client.stream(
+                "POST",
+                "/api/v1/control/manager/stream",
+                json={"sessionKey": "dashboard:control", "message": "Hello"},
+            ) as resp:
+                assert resp.status_code == 200
+                raw = "".join(resp.iter_text())
+
+        assert "event: error" in raw
+        assert '"code":"OPENCLAW_GATEWAY_UNREACHABLE"' in raw
+        assert '"message":"gateway offline"' in raw
 
 
 # ──────────────────────────────────────────────────────────────────

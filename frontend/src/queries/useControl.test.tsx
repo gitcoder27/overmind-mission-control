@@ -49,6 +49,10 @@ function createTestProvider(overrides?: Partial<DataProvider>): DataProvider {
     disableCronJob: vi.fn(),
     runCronJob: vi.fn(),
     createProject: vi.fn().mockResolvedValue({ projectId: 'proj_abc', status: 'QUEUED', routeType: 'auto', priority: 3 }),
+    streamManagerMessage: vi.fn().mockImplementation(async (req, onEvent) => {
+      onEvent({ type: 'delta', delta: 'Done!', outputIndex: 0, sessionKey: req.sessionKey });
+      onEvent({ type: 'done', sessionKey: req.sessionKey });
+    }),
     sendManagerMessage: vi.fn().mockResolvedValue({ messages: [{ role: 'assistant', content: 'Done!' }], sessionKey: 'test:session', model: null, usage: null }),
     getManagerSession: vi.fn().mockResolvedValue({ sessionKey: 'test:session', messages: [], count: 0 }),
     ...overrides,
@@ -130,7 +134,7 @@ describe('useManagerChat', () => {
     });
   });
 
-  it('sends a message and appends response', async () => {
+  it('sends a message and appends streamed response', async () => {
     const provider = createTestProvider();
     const { result } = renderHook(() => useManagerChat('test:session'), { wrapper: createWrapper(provider) });
 
@@ -138,10 +142,10 @@ describe('useManagerChat', () => {
 
     await result.current.sendMessage('Hello');
 
-    expect(provider.sendManagerMessage).toHaveBeenCalledWith({
+    expect(provider.streamManagerMessage).toHaveBeenCalledWith({
       sessionKey: 'test:session',
       message: 'Hello',
-    });
+    }, expect.any(Function));
 
     await waitFor(() => {
       expect(result.current.messages.length).toBeGreaterThanOrEqual(2);
@@ -150,6 +154,7 @@ describe('useManagerChat', () => {
 
   it('handles send error without crashing', async () => {
     const provider = createTestProvider({
+      streamManagerMessage: vi.fn().mockRejectedValue(new Error('Timeout')),
       sendManagerMessage: vi.fn().mockRejectedValue(new Error('Timeout')),
     });
     const { result } = renderHook(() => useManagerChat('test:session'), { wrapper: createWrapper(provider) });

@@ -14,7 +14,7 @@ vi.mock('@tanstack/react-router', async () => {
 });
 
 describe('OverviewPage smoke', () => {
-  it('renders command center heading', async () => {
+  it('renders overview heading', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -27,6 +27,6 @@ describe('OverviewPage smoke', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('Command Center')).toBeInTheDocument();
+    expect(await screen.findByText('Overview')).toBeInTheDocument();
   });
 });

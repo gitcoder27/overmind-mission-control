@@ -475,7 +475,7 @@ function ChatTab() {
           <EmptyChatState />
         ) : (
           messages.map((msg, idx) => (
-            <ChatBubble key={idx} message={msg} />
+            <ChatBubble key={msg.id || idx} message={msg} />
           ))
         )}
 
@@ -590,7 +590,11 @@ function EmptyChatState() {
   );
 }
 
-function ChatBubble({ message }: { message: { role: string; content: string; timestamp: string | null } }) {
+function ChatBubble({
+  message,
+}: {
+  message: { id?: string; role: string; content: string; timestamp: string | null };
+}) {
   const isUser = message.role === 'user';
 
   return (

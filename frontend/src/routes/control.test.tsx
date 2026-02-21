@@ -69,6 +69,10 @@ function createTestProvider(overrides?: Partial<DataProvider>): DataProvider {
     disableCronJob: vi.fn(),
     runCronJob: vi.fn(),
     createProject: vi.fn().mockResolvedValue({ projectId: 'proj_test123', status: 'QUEUED', routeType: 'auto', priority: 3 }),
+    streamManagerMessage: vi.fn().mockImplementation(async (req, onEvent) => {
+      onEvent({ type: 'delta', delta: 'Test response', outputIndex: 0, sessionKey: req.sessionKey });
+      onEvent({ type: 'done', sessionKey: req.sessionKey });
+    }),
     sendManagerMessage: vi.fn().mockResolvedValue({ messages: [{ role: 'assistant', content: 'Test response' }], sessionKey: 'dashboard:control', model: null, usage: null }),
     getManagerSession: vi.fn().mockResolvedValue({ sessionKey: 'dashboard:control', messages: [], count: 0 }),
     ...overrides,
@@ -245,8 +249,9 @@ describe('ControlPage', () => {
       fireEvent.keyDown(input, { key: 'Enter' });
 
       await waitFor(() => {
-        expect(provider.sendManagerMessage).toHaveBeenCalledWith(
+        expect(provider.streamManagerMessage).toHaveBeenCalledWith(
           expect.objectContaining({ message: 'What projects are running?' }),
+          expect.any(Function),
         );
       });
     });

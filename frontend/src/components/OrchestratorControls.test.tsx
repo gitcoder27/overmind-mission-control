@@ -91,6 +91,7 @@ function createTestProvider(
     disableCronJob: vi.fn(),
     runCronJob: vi.fn(),
     createProject: vi.fn().mockResolvedValue({ projectId: 'proj_test', status: 'QUEUED', routeType: 'auto', priority: 3 }),
+    streamManagerMessage: vi.fn(),
     sendManagerMessage: vi.fn().mockResolvedValue({ messages: [{ role: 'assistant', content: 'ok' }], sessionKey: 'test', model: null, usage: null }),
     getManagerSession: vi.fn().mockResolvedValue({ sessionKey: 'test', messages: [], count: 0 }),
     ...extra,

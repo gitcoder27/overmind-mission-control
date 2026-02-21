@@ -381,7 +381,7 @@ async def manager_send_message(
     return _parse_json(raw, "manager turn")
 
 
-def _gateway_http_base_url() -> tuple[str, str | None]:
+def _gateway_http_base_url() -> tuple[str, str | None, str]:
     """Resolve Gateway base URL + auth token from ``~/.openclaw/openclaw.json``.
 
     Falls back to loopback with the default gateway port when the config is
@@ -422,13 +422,17 @@ def _gateway_http_base_url() -> tuple[str, str | None]:
         base_url = f"http://127.0.0.1:{port}"
 
     token: str | None = None
+    auth_mode = "token"
     auth_cfg = gateway_cfg.get("auth") if isinstance(gateway_cfg, dict) else None
     if isinstance(auth_cfg, dict):
+        mode_value = auth_cfg.get("mode")
+        if isinstance(mode_value, str) and mode_value.strip():
+            auth_mode = mode_value.strip().lower()
         token_value = auth_cfg.get("token")
         if isinstance(token_value, str) and token_value.strip():
             token = token_value.strip()
 
-    return base_url, token
+    return base_url, token, auth_mode
 
 
 def _extract_output_index(payload: dict[str, Any]) -> int:
@@ -531,7 +535,12 @@ async def manager_stream_message(
       - ``{"event": "done", "data": {"sessionKey"}}``
       - ``{"event": "error", "data": {"message", "code", "details"}}``
     """
-    base_url, token = _gateway_http_base_url()
+    base_url, token, auth_mode = _gateway_http_base_url()
+    if auth_mode not in {"off", "none", "disabled"} and not token:
+        raise CliError(
+            code="OPENCLAW_GATEWAY_AUTH_ERROR",
+            message="Gateway auth token missing in ~/.openclaw/openclaw.json",
+        )
     endpoint = f"{base_url}/v1/responses"
     payload = {
         "agentId": agent_id,

@@ -185,6 +185,7 @@ export function createMockProvider(): DataProvider {
     async disableCronJob() { throw new Error('Not supported in mock provider'); },
     async runCronJob() { throw new Error('Not supported in mock provider'); },
     async createProject() { throw new Error('Not supported in mock provider'); },
+    async streamManagerMessage() { throw new Error('Not supported in mock provider'); },
     async sendManagerMessage() { throw new Error('Not supported in mock provider'); },
     async getManagerSession() { throw new Error('Not supported in mock provider'); },
   };

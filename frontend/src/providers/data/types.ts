@@ -16,6 +16,7 @@ import type {
   IntakeResult,
   ManagerMessageRequest,
   ManagerMessageResult,
+  ManagerStreamEvent,
   ManagerSessionResult,
   OrchestratorRestartResult,
 } from '@/types/domain';
@@ -74,6 +75,10 @@ export interface DataProvider {
 
   // Control Surface
   createProject(intake: IntakeRequest): Promise<IntakeResult>;
+  streamManagerMessage(
+    req: ManagerMessageRequest,
+    onEvent: (event: ManagerStreamEvent) => void,
+  ): Promise<void>;
   sendManagerMessage(req: ManagerMessageRequest): Promise<ManagerMessageResult>;
   getManagerSession(sessionKey: string): Promise<ManagerSessionResult>;
 }

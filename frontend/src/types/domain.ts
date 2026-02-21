@@ -421,6 +421,30 @@ export interface ManagerMessageRequest {
   message: string;
 }
 
+export interface ManagerStreamDeltaEvent {
+  type: 'delta';
+  delta: string;
+  outputIndex: number;
+  sessionKey: string;
+}
+
+export interface ManagerStreamDoneEvent {
+  type: 'done';
+  sessionKey: string;
+}
+
+export interface ManagerStreamErrorEvent {
+  type: 'error';
+  code?: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export type ManagerStreamEvent =
+  | ManagerStreamDeltaEvent
+  | ManagerStreamDoneEvent
+  | ManagerStreamErrorEvent;
+
 export interface ManagerMessageResult {
   messages: { role: 'assistant'; content: string }[];
   sessionKey: string;
@@ -430,6 +454,7 @@ export interface ManagerMessageResult {
 }
 
 export interface ManagerChatMessage {
+  id?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string | null;

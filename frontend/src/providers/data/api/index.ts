@@ -17,6 +17,7 @@ import type {
   IntakeResult,
   ManagerMessageRequest,
   ManagerMessageResult,
+  ManagerStreamEvent,
   ManagerSessionResult,
   OrchestratorRestartResult,
 } from '@/types/domain';
@@ -38,16 +39,21 @@ const capabilities: ProviderCapabilities = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8788';
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  // Attach auth token if available
+function buildAuthHeaders(includeJsonContentType = true): Record<string, string> {
   const token = useAuthStore.getState().token;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+  return headers;
+}
 
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}/api/v1${path}`, {
-    headers,
+    headers: buildAuthHeaders(),
     ...options,
   });
 
@@ -190,6 +196,162 @@ export function createApiProvider(): DataProvider {
         method: 'POST',
         body: JSON.stringify(intake),
       });
+    },
+
+    async streamManagerMessage(req: ManagerMessageRequest, onEvent: (event: ManagerStreamEvent) => void) {
+      const headers = buildAuthHeaders();
+      headers.Accept = 'text/event-stream';
+
+      const res = await fetch(`${API_BASE}/api/v1/control/manager/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(req),
+      });
+
+      if (res.status === 401) {
+        useAuthStore.getState().logout();
+        window.location.href = '/login';
+        throw new Error('Unauthorized');
+      }
+
+      if (!res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await res.json();
+          throw new Error(json.error?.message || `Stream error: ${res.status}`);
+        }
+        const raw = await res.text();
+        throw new Error(raw || `Stream error: ${res.status}`);
+      }
+
+      if (!res.body) {
+        throw new Error('No stream body returned from manager stream endpoint');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let doneSeen = false;
+
+      const parseOutputIndex = (value: unknown): number => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          return value;
+        }
+        if (typeof value === 'string' && value.trim()) {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isFinite(parsed)) return parsed;
+        }
+        return 0;
+      };
+
+      const emitEventBlock = (block: string) => {
+        const normalized = block.replace(/\r/g, '');
+        if (!normalized.trim()) return;
+
+        let eventName = 'message';
+        const dataLines: string[] = [];
+
+        for (const line of normalized.split('\n')) {
+          if (!line || line.startsWith(':')) continue;
+          if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim() || 'message';
+            continue;
+          }
+          if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trimStart());
+          }
+        }
+
+        const dataRaw = dataLines.join('\n');
+        if (!dataRaw) return;
+
+        if (dataRaw === '[DONE]' || eventName === 'done') {
+          doneSeen = true;
+          onEvent({ type: 'done', sessionKey: req.sessionKey });
+          return;
+        }
+
+        let payload: unknown = dataRaw;
+        try {
+          payload = JSON.parse(dataRaw);
+        } catch {
+          // Non-JSON data frames are allowed by SSE; keep as raw string.
+        }
+
+        if (eventName === 'delta' && typeof payload === 'object' && payload !== null) {
+          const data = payload as Record<string, unknown>;
+          const delta = typeof data.delta === 'string' ? data.delta : '';
+          if (!delta) return;
+          onEvent({
+            type: 'delta',
+            delta,
+            outputIndex: parseOutputIndex(data.outputIndex),
+            sessionKey: typeof data.sessionKey === 'string' ? data.sessionKey : req.sessionKey,
+          });
+          return;
+        }
+
+        if (eventName === 'error') {
+          let message = 'Manager stream failed';
+          let code: string | undefined;
+          let details: Record<string, unknown> | undefined;
+
+          if (typeof payload === 'object' && payload !== null) {
+            const data = payload as Record<string, unknown>;
+            if (typeof data.message === 'string' && data.message.trim()) {
+              message = data.message;
+            }
+            if (typeof data.code === 'string' && data.code.trim()) {
+              code = data.code;
+            }
+            if (typeof data.details === 'object' && data.details !== null) {
+              details = data.details as Record<string, unknown>;
+            }
+          } else if (typeof payload === 'string' && payload.trim()) {
+            message = payload;
+          }
+
+          onEvent({ type: 'error', message, code, details });
+          throw new Error(message);
+        }
+      };
+
+      try {
+        const nextBoundary = () => {
+          const lf = buffer.indexOf('\n\n');
+          const crlf = buffer.indexOf('\r\n\r\n');
+          if (lf < 0 && crlf < 0) return { index: -1, length: 0 };
+          if (lf < 0) return { index: crlf, length: 4 };
+          if (crlf < 0) return { index: lf, length: 2 };
+          return lf < crlf ? { index: lf, length: 2 } : { index: crlf, length: 4 };
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          buffer += decoder.decode(value, { stream: true });
+
+          let boundary = nextBoundary();
+          while (boundary.index >= 0) {
+            const block = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary.length);
+            emitEventBlock(block);
+            boundary = nextBoundary();
+          }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          emitEventBlock(buffer);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      if (!doneSeen) {
+        onEvent({ type: 'done', sessionKey: req.sessionKey });
+      }
     },
 
     async sendManagerMessage(req: ManagerMessageRequest) {

@@ -42,9 +42,10 @@ export function useCreateProject() {
 export function useManagerChat(sessionKey: string) {
   const provider = useDataProvider();
   const queryClient = useQueryClient();
+  const managerSessionKey = queryKeys.managerSession(sessionKey);
 
   const sessionQuery = useQuery({
-    queryKey: queryKeys.managerSession(sessionKey),
+    queryKey: managerSessionKey,
     queryFn: async () => {
       try {
         const result = await provider.getManagerSession(sessionKey);
@@ -60,40 +61,76 @@ export function useManagerChat(sessionKey: string) {
 
   const sendMutation = useMutation({
     mutationFn: async (message: string) => {
-      return provider.sendManagerMessage({ sessionKey, message });
+      const streamPrefix = `manager-stream-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      let sawDelta = false;
+
+      const appendDelta = (outputIndex: number, delta: string, eventSessionKey: string) => {
+        const targetSessionKey = eventSessionKey || sessionKey;
+        const streamMessageId = `${streamPrefix}:${outputIndex}`;
+        queryClient.setQueryData<ManagerChatMessage[]>(
+          queryKeys.managerSession(targetSessionKey),
+          (old) => {
+            const rows = [...(old || [])];
+            const existingIdx = rows.findIndex((row) => row.id === streamMessageId);
+            if (existingIdx >= 0) {
+              rows[existingIdx] = {
+                ...rows[existingIdx],
+                content: `${rows[existingIdx].content}${delta}`,
+                timestamp: new Date().toISOString(),
+              };
+            } else {
+              rows.push({
+                id: streamMessageId,
+                role: 'assistant',
+                content: delta,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return rows;
+          },
+        );
+      };
+
+      try {
+        await provider.streamManagerMessage({ sessionKey, message }, (event) => {
+          if (event.type !== 'delta') return;
+          sawDelta = true;
+          appendDelta(event.outputIndex, event.delta, event.sessionKey);
+        });
+        return;
+      } catch (streamErr) {
+        // Fallback to legacy non-streaming endpoint only if no streamed content arrived.
+        if (sawDelta) {
+          throw streamErr;
+        }
+
+        const fallback = await provider.sendManagerMessage({ sessionKey, message });
+        const fallbackMessages: ManagerChatMessage[] = fallback.messages.map((msg, idx) => ({
+          id: `${streamPrefix}:fallback:${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date().toISOString(),
+        }));
+        queryClient.setQueryData<ManagerChatMessage[]>(
+          managerSessionKey,
+          (old) => [...(old || []), ...fallbackMessages],
+        );
+      }
     },
     onMutate: async (message: string) => {
       // Optimistically add user message
-      await queryClient.cancelQueries({ queryKey: queryKeys.managerSession(sessionKey) });
-      const prev = queryClient.getQueryData<ManagerChatMessage[]>(queryKeys.managerSession(sessionKey));
+      await queryClient.cancelQueries({ queryKey: managerSessionKey });
       const userMsg: ManagerChatMessage = {
         role: 'user',
         content: message,
         timestamp: new Date().toISOString(),
       };
       queryClient.setQueryData<ManagerChatMessage[]>(
-        queryKeys.managerSession(sessionKey),
+        managerSessionKey,
         (old) => [...(old || []), userMsg],
       );
-      return { prev };
     },
-    onSuccess: (data) => {
-      // Append all assistant messages from the response
-      const newMessages: ManagerChatMessage[] = data.messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-        timestamp: new Date().toISOString(),
-      }));
-      queryClient.setQueryData<ManagerChatMessage[]>(
-        queryKeys.managerSession(sessionKey),
-        (old) => [...(old || []), ...newMessages],
-      );
-    },
-    onError: (err, _message, context) => {
-      // Rollback optimistic user message
-      if (context?.prev) {
-        queryClient.setQueryData(queryKeys.managerSession(sessionKey), context.prev);
-      }
+    onError: (err) => {
       toast('error', 'Message failed', err instanceof Error ? err.message : 'Unknown error');
     },
     onSettled: () => {
