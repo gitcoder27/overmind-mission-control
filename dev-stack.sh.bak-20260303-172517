@@ -5,15 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
-LOG_DIR="$ROOT_DIR/.dev-stack-logs"
 
-BACKEND_HOST="${OVERMIND_DASHBOARD_HOST:-127.0.0.1}"
-BACKEND_PORT="${OVERMIND_DASHBOARD_PORT:-8788}"
-FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+BACKEND_PORT="8789"
+FRONTEND_PORT="5173"
+BACKEND_HOST="127.0.0.1"
+FRONTEND_HOST="127.0.0.1"
 
-BACKEND_LOG="$LOG_DIR/backend.log"
-FRONTEND_LOG="$LOG_DIR/frontend.log"
+BACKEND_LOG="$BACKEND_DIR/backend.log"
+FRONTEND_LOG="$FRONTEND_DIR/frontend.log"
 
 BACKEND_PATTERN="uvicorn app.main:app --host $BACKEND_HOST --port $BACKEND_PORT"
 FRONTEND_PATTERN="vite --host $FRONTEND_HOST --port $FRONTEND_PORT"
@@ -25,43 +24,36 @@ COMMAND="start"
 DRY_RUN=false
 VERBOSE=false
 MAX_STARTUP_WAIT_SECONDS=60
-
 CLEANUP_ON_EXIT=false
 MANAGED_BACKEND_PID=""
 MANAGED_FRONTEND_PID=""
 
 log() {
-  printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S%:z')" "$*"
-}
-
-section() {
-  log "== $* =="
+  echo "$*"
 }
 
 verbose() {
   if [[ "$VERBOSE" == "true" ]]; then
-    log "[verbose] $*"
+    echo "[verbose] $*"
   fi
 }
 
 print_usage() {
-  cat <<'EOF_USAGE'
+  cat <<'EOF'
 Usage:
-  ./dev-stack.sh [--dry-run] [--verbose] [--timeout seconds] {start|stop|restart|status|logs}
+  ./dev-stack.sh [--dry-run] [--verbose] {start|stop|restart|status|logs}
 
 Commands:
   start    Start backend + frontend (default)
-  stop     Stop backend + frontend processes matching startup patterns
+  stop     Stop backend + frontend started by matching command patterns
   restart  Stop then start
-  status   Show listener and process status
-  logs     Show recent logs from backend + frontend
+  status   Show listener + process status
+  logs     Tail recent log lines from both services
 
 Options:
-  --dry-run   Print commands only (no side effects)
+  --dry-run   Print actions only (no side effects)
   --verbose   Print detailed steps
-  --timeout   Override startup readiness timeout in seconds (default 60)
-  --help      Show this message
-EOF_USAGE
+EOF
 }
 
 require_command() {
@@ -96,17 +88,9 @@ require_dir() {
   fi
 }
 
-warn_missing_file() {
-  local path=$1
-  local label=$2
-  if [[ ! -e "$path" ]]; then
-    verbose "Optional ${label} missing: $path"
-  fi
-}
-
 service_pids() {
   local pattern=$1
-  pgrep -f -- "$pattern" 2>/dev/null || true
+  pgrep -f "$pattern" 2>/dev/null || true
 }
 
 is_port_in_use() {
@@ -114,63 +98,59 @@ is_port_in_use() {
   ss -ltnp 2>/dev/null | grep -qE ":${port}([[:space:]/]|$)"
 }
 
+warn_missing_file() {
+  local path=$1
+  local label=$2
+  if [[ ! -e "$path" ]]; then
+    verbose "Optional file missing for ${label}: $path"
+  fi
+}
+
 wait_for_http() {
   local service_name=$1
   local url=$2
   local timeout=$3
-  local attempts_left=$((timeout / 2))
+  local attempts=$((timeout / 2))
+  local attempts_left=$attempts
+  local i
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "[dry-run] skip readiness wait for ${service_name}: ${url}"
+    log "[dry-run] skip wait for ${service_name} readiness: $url"
     return 0
   fi
 
   while ((attempts_left > 0)); do
     if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
-      log "✓ ${service_name} ready: ${url}"
+      log "✓ $service_name is ready: $url"
       return 0
     fi
-    verbose "Waiting for ${service_name} on ${url} (${attempts_left}/$((timeout / 2)))"
+    verbose "Waiting for ${service_name} at ${url}... (${attempts_left}/${attempts})"
     sleep 2
     ((attempts_left--))
   done
 
   log "Timed out waiting for ${service_name} (${url})"
-  if [[ -f "$BACKEND_LOG" && "$service_name" == "backend" ]]; then
-    verbose "backend tail:"
-    tail -n 40 "$BACKEND_LOG" || true
-  fi
-  if [[ -f "$FRONTEND_LOG" && "$service_name" == "frontend" ]]; then
-    verbose "frontend tail:"
-    tail -n 40 "$FRONTEND_LOG" || true
-  fi
   return 1
 }
 
 ensure_ports_clear_for_start() {
   local port=$1
-  local pattern=$2
-  local existing_pids
-  existing_pids=$(service_pids "$pattern")
-
-  if is_port_in_use "$port" && [[ -z "$existing_pids" ]]; then
-    log "Port ${port} is in use by an unexpected process"
+  local service=$2
+  local existing_pid_count
+  existing_pid_count=$(service_pids "${service}")
+  if is_port_in_use "$port" && [[ -z "$existing_pid_count" ]]; then
+    log "Port $port is in use by an unexpected process"
     ss -ltnp 2>/dev/null | grep -E ":${port}([[:space:]/]|$)" || true
     return 1
   fi
 }
 
-ensure_log_dir() {
-  mkdir -p "$LOG_DIR"
-}
-
 start_backend() {
   local existing_backend_pids
-  local backend_cmd
   existing_backend_pids=$(service_pids "$BACKEND_PATTERN")
 
   if [[ -n "$existing_backend_pids" ]]; then
-    log "Backend already running (reuse): ${existing_backend_pids//$'\n'/, }"
+    log "Backend already running (reusing): ${existing_backend_pids//$'\n'/, }"
     return 0
   fi
 
@@ -178,18 +158,17 @@ start_backend() {
     return 1
   fi
 
-  backend_cmd="cd '$BACKEND_DIR' && OVERMIND_DASHBOARD_HOST='$BACKEND_HOST' OVERMIND_DASHBOARD_PORT='$BACKEND_PORT' ./run.sh"
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "Would run: nohup bash -lc \"$backend_cmd\" >>'$BACKEND_LOG' 2>&1 &"
+    log "Would start backend: nohup bash -lc \"cd '$BACKEND_DIR' && OVERMIND_DASHBOARD_PORT=$BACKEND_PORT ./run.sh\" >\"$BACKEND_LOG\" 2>&1 &"
     return 0
   fi
 
-  ensure_log_dir
-  verbose "Starting backend: $backend_cmd"
   CLEANUP_ON_EXIT=true
-  nohup bash -lc "$backend_cmd" >>"$BACKEND_LOG" 2>&1 &
+  verbose "Launching backend in background"
+  nohup bash -lc "cd '$BACKEND_DIR' && OVERMIND_DASHBOARD_PORT=$BACKEND_PORT ./run.sh" >"$BACKEND_LOG" 2>&1 &
   MANAGED_BACKEND_PID=$!
   verbose "Backend started as pid ${MANAGED_BACKEND_PID}"
+
   if ! wait_for_http "backend" "$BACKEND_HEALTH_URL" "$MAX_STARTUP_WAIT_SECONDS"; then
     return 1
   fi
@@ -197,11 +176,10 @@ start_backend() {
 
 start_frontend() {
   local existing_frontend_pids
-  local frontend_cmd
   existing_frontend_pids=$(service_pids "$FRONTEND_PATTERN")
 
   if [[ -n "$existing_frontend_pids" ]]; then
-    log "Frontend already running (reuse): ${existing_frontend_pids//$'\n'/, }"
+    log "Frontend already running (reusing): ${existing_frontend_pids//$'\n'/, }"
     return 0
   fi
 
@@ -209,70 +187,20 @@ start_frontend() {
     return 1
   fi
 
-  frontend_cmd="cd '$FRONTEND_DIR' && npm run dev -- --host $FRONTEND_HOST --port $FRONTEND_PORT"
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "Would run: nohup bash -lc \"$frontend_cmd\" >>'$FRONTEND_LOG' 2>&1 &"
+    log "Would start frontend: nohup bash -lc \"cd '$FRONTEND_DIR' && npm run dev -- --host $FRONTEND_HOST --port $FRONTEND_PORT\" >\"$FRONTEND_LOG\" 2>&1 &"
     return 0
   fi
 
-  ensure_log_dir
-  verbose "Starting frontend: $frontend_cmd"
-  nohup bash -lc "$frontend_cmd" >>"$FRONTEND_LOG" 2>&1 &
+  CLEANUP_ON_EXIT=true
+  verbose "Launching frontend in background"
+  nohup bash -lc "cd '$FRONTEND_DIR' && npm run dev -- --host $FRONTEND_HOST --port $FRONTEND_PORT" >"$FRONTEND_LOG" 2>&1 &
   MANAGED_FRONTEND_PID=$!
   verbose "Frontend started as pid ${MANAGED_FRONTEND_PID}"
+
   if ! wait_for_http "frontend" "$FRONTEND_HEALTH_URL" "$MAX_STARTUP_WAIT_SECONDS"; then
     return 1
   fi
-}
-
-terminate_and_wait() {
-  local label=$1
-  local pids=$2
-
-  if [[ -z "$pids" ]]; then
-    log "${label}: not running"
-    return 0
-  fi
-
-  if [[ "$DRY_RUN" == "true" ]]; then
-    log "[dry-run] Would stop ${label} processes: ${pids//$'\n'/, }"
-    return 0
-  fi
-
-  log "Stopping ${label}..."
-  local pid
-  while IFS= read -r pid; do
-    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
-      kill -s TERM "$pid" || true
-    fi
-  done <<< "$pids"
-
-  local attempts=0
-  while ((attempts < 10)); do
-    local remaining=0
-    local test_pid
-    while IFS= read -r test_pid; do
-      if [[ -n "$test_pid" ]] && kill -0 "$test_pid" >/dev/null 2>&1; then
-        remaining=1
-        break
-      fi
-    done <<< "$pids"
-
-    if ((remaining == 0)); then
-      log "${label} stopped cleanly"
-      return 0
-    fi
-
-    sleep 1
-    ((attempts++))
-  done
-
-  log "${label} did not exit in time; escalating to SIGKILL"
-  while IFS= read -r pid; do
-    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
-      kill -s KILL "$pid" || true
-    fi
-  done <<< "$pids"
 }
 
 cleanup_managed_processes() {
@@ -281,41 +209,52 @@ cleanup_managed_processes() {
   fi
 
   if [[ -n "$MANAGED_BACKEND_PID" ]]; then
-    terminate_and_wait "backend" "$MANAGED_BACKEND_PID"
-    MANAGED_BACKEND_PID=""
+    if kill -0 "$MANAGED_BACKEND_PID" >/dev/null 2>&1; then
+      verbose "Cleaning backend pid ${MANAGED_BACKEND_PID}"
+      kill -s TERM "$MANAGED_BACKEND_PID" || true
+    fi
   fi
 
   if [[ -n "$MANAGED_FRONTEND_PID" ]]; then
-    terminate_and_wait "frontend" "$MANAGED_FRONTEND_PID"
-    MANAGED_FRONTEND_PID=""
+    if kill -0 "$MANAGED_FRONTEND_PID" >/dev/null 2>&1; then
+      verbose "Cleaning frontend pid ${MANAGED_FRONTEND_PID}"
+      kill -s TERM "$MANAGED_FRONTEND_PID" || true
+    fi
+  fi
+
+  sleep 1
+
+  if [[ -n "$MANAGED_BACKEND_PID" ]] && kill -0 "$MANAGED_BACKEND_PID" >/dev/null 2>&1; then
+    kill -s KILL "$MANAGED_BACKEND_PID" || true
+  fi
+  if [[ -n "$MANAGED_FRONTEND_PID" ]] && kill -0 "$MANAGED_FRONTEND_PID" >/dev/null 2>&1; then
+    kill -s KILL "$MANAGED_FRONTEND_PID" || true
   fi
 }
 
-start() {
-  section "Startup preflight"
-  preflight_start
-  CLEANUP_ON_EXIT=true
+on_exit() {
+  local rc=$?
+  if [[ "${CLEANUP_ON_EXIT:-false}" == "true" ]]; then
+    cleanup_managed_processes || true
+  fi
+  return "$rc"
+}
 
+start() {
+  log "Starting development stack..."
+  preflight_start
   if ! start_backend; then
     return 1
   fi
   if ! start_frontend; then
     return 1
   fi
-
   CLEANUP_ON_EXIT=false
-  section "Stack status"
   status
-  log "Frontend: ${FRONTEND_HEALTH_URL%/}"
-  log "Backend: ${BACKEND_HEALTH_URL%/docs}"
-  log "Backend docs: ${BACKEND_HEALTH_URL}"
-}
-
-stop() {
-  section "Stop flow"
-  stop_processes "$BACKEND_PATTERN" "backend"
-  stop_processes "$FRONTEND_PATTERN" "frontend"
-  status
+  echo ""
+  echo "Frontend: ${FRONTEND_HEALTH_URL%/}"
+  echo "Backend : http://$BACKEND_HOST:$BACKEND_PORT"
+  echo "Backend docs: $BACKEND_HEALTH_URL"
 }
 
 stop_processes() {
@@ -323,35 +262,77 @@ stop_processes() {
   local label=$2
   local pids
   pids=$(service_pids "$pattern")
-  terminate_and_wait "${label} (${pattern})" "$pids"
+  if [[ -z "$pids" ]]; then
+    log "${label}: not running"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would stop ${label} processes: ${pids//$'\n'/, }"
+    return 0
+  fi
+
+  log "Stopping ${label}..."
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill -s TERM "$pid" || true
+    fi
+  done <<< "$pids"
+
+  local attempts=0
+  local remaining_pids
+  while ((attempts < 10)); do
+    remaining_pids=$(service_pids "$pattern")
+    if [[ -z "$remaining_pids" ]]; then
+      log "${label} stopped cleanly"
+      return 0
+    fi
+    sleep 1
+    ((attempts++))
+  done
+
+  log "${label} did not exit, escalating to SIGKILL"
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill -s KILL "$pid" || true
+    fi
+  done <<< "$pids"
+}
+
+stop() {
+  log "Stopping development stack..."
+  stop_processes "$BACKEND_PATTERN" "backend"
+  stop_processes "$FRONTEND_PATTERN" "frontend"
+  sleep 1
+  status
 }
 
 status() {
-  section "Listening sockets"
+  echo ""
+  echo "== Listening ports =="
   if command -v ss >/dev/null 2>&1; then
-    ss -ltnp 2>/dev/null | grep -E ":$FRONTEND_PORT\|:$BACKEND_PORT\|:8787" || true
+    ss -ltnp 2>/dev/null | grep ":$FRONTEND_PORT\|:$BACKEND_PORT\|:8787" || true
   else
-    log "ss unavailable; install iproute2 for live port checks"
+    echo "ss unavailable; install iproute2 for port checks"
   fi
 
   echo ""
-  section "Process matches"
-  pgrep -af -- "$BACKEND_PATTERN" || echo "backend: not running"
-  pgrep -af -- "$FRONTEND_PATTERN" || echo "frontend: not running"
+  echo "== Process matches =="
+  pgrep -af "$BACKEND_PATTERN" || echo "backend: not running"
+  pgrep -af "$FRONTEND_PATTERN" || echo "frontend: not running"
 }
 
 logs() {
   echo ""
-  section "Backend log: ${BACKEND_LOG}"
+  echo "--- backend log ($BACKEND_LOG) ---"
   tail -n 80 "$BACKEND_LOG" 2>/dev/null || echo "no backend log yet"
   echo ""
-  section "Frontend log: ${FRONTEND_LOG}"
+  echo "--- frontend log ($FRONTEND_LOG) ---"
   tail -n 80 "$FRONTEND_LOG" 2>/dev/null || echo "no frontend log yet"
 }
 
 preflight_start() {
   local ok=true
-  require_command bash || ok=false
   require_command ss || ok=false
   require_command pgrep || ok=false
   require_command pkill || ok=false
@@ -367,37 +348,21 @@ preflight_start() {
   require_file "$BACKEND_DIR/.venv/bin/activate" || ok=false
 
   warn_missing_file "$FRONTEND_DIR/node_modules" "frontend dependencies"
-  warn_missing_file "$BACKEND_DIR/.env" "backend env file"
-  warn_missing_file "$FRONTEND_DIR/.env" "frontend env file"
+  warn_missing_file "$BACKEND_DIR/.env" "backend env"
+  warn_missing_file "$FRONTEND_DIR/.env" "frontend env"
   warn_missing_file "$BACKEND_DIR/.env.example" "backend env example"
   warn_missing_file "$FRONTEND_DIR/.env.example" "frontend env example"
 
   if [[ "$ok" != "true" ]]; then
-    log "Preflight failed. Run scripts/dev-doctor.sh for exact actions."
+    log "Preflight failed. Fix requirements and retry."
     return 1
   fi
 
   verbose "Preflight checks passed"
 }
 
-preflight_generic() {
-  if ! require_command ss; then
-    return 1
-  fi
-  if ! require_command pgrep; then
-    return 1
-  fi
-  return 0
-}
-
-on_exit() {
-  if [[ "${CLEANUP_ON_EXIT:-false}" == "true" ]]; then
-    cleanup_managed_processes || true
-  fi
-}
-
-on_signal() {
-  on_exit || true
+cleanup_signals() {
+  cleanup_managed_processes || true
   exit 130
 }
 
@@ -411,23 +376,6 @@ parse_args() {
       --verbose)
         VERBOSE=true
         ;;
-      --timeout)
-        if [[ $# -lt 2 ]]; then
-          log "Missing value for --timeout"
-          print_usage
-          exit 1
-        fi
-        if ! [[ "$2" =~ ^[0-9]+$ ]]; then
-          log "--timeout must be a positive integer"
-          exit 1
-        fi
-        if [[ "$2" -eq 0 ]]; then
-          log "--timeout must be greater than zero"
-          exit 1
-        fi
-        MAX_STARTUP_WAIT_SECONDS="$2"
-        shift
-        ;;
       start|stop|restart|status|logs)
         if [[ "$command_set" == true ]]; then
           log "Only one command is allowed"
@@ -437,11 +385,9 @@ parse_args() {
         COMMAND="$1"
         command_set=true
         ;;
-      --help|-h)
+      --help|-h|"")
         print_usage
         exit 0
-        ;;
-      "")
         ;;
       *)
         log "Unknown argument: $1"
@@ -451,24 +397,31 @@ parse_args() {
     esac
     shift
   done
+
+  if [[ "$DRY_RUN" == "true" && "$COMMAND" == "stop" ]]; then
+    verbose "Dry-run mode is active; no process termination will occur."
+  fi
+
+  if [[ "$DRY_RUN" == "true" && "$COMMAND" == "logs" ]]; then
+    verbose "Dry-run mode is active; logs are read-only and will be displayed."
+  fi
 }
 
 run() {
   case "$COMMAND" in
     start)
-      start
+      if ! start; then
+        return 1
+      fi
       ;;
     stop)
-      preflight_generic
       stop
       ;;
     restart)
-      preflight_generic
       stop
       start
       ;;
     status)
-      preflight_generic
       status
       ;;
     logs)
@@ -482,8 +435,8 @@ run() {
 }
 
 trap on_exit EXIT
-trap on_signal INT
-trap on_signal TERM
+trap cleanup_signals INT
+trap cleanup_signals TERM
 
 parse_args "$@"
 run
