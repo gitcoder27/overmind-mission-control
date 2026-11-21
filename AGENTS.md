@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+Overmind Mission Control is a full-stack dashboard that monitors and manages an `overmind_hq` core runtime (OpenClaw/Overmind). The backend reads the OpenClaw SQLite DB and calls the Overmind/OpenClaw CLI for mutations; the frontend talks only to the backend. Agents in this repo are Claude Fable 5.2 (planning, review, leading rounds) and Claude Opus 5.5 (implementation, evidence-gathering, review). No other models work here.
+
 ## Project Structure & Module Organization
 The repository is a monorepo split by service:
 - `backend/` — FastAPI application.
@@ -37,7 +39,8 @@ The repository is a monorepo split by service:
   - Hooks: `useSomething` (`useMetricsSocket`)
   - Route files: `kebab-or-camel-case` as currently used (`system-health` route folder, `LoginPage`)
   - Tests: `*.test.ts` / `*.test.tsx`
-- Use shared provider layer in frontend (`frontend/src/providers/data`) instead of direct API calls in route components.
+- Use the shared provider layer in the frontend (`frontend/src/providers/data`) instead of direct endpoint calls in route or page components. Keep contract fidelity with backend envelopes and fields, and keep mutation capabilities aware of their statuses.
+- Use the existing WebSocket hook (`frontend/src/lib/useWebSocket.ts`) for real-time data.
 - Linting: `frontend/eslint.config.js` (run with `npm run lint`).
 
 ## Testing Guidelines
@@ -56,6 +59,10 @@ The repository is a monorepo split by service:
   - Screenshots/videos for UI-affecting changes
 
 ## Security & Configuration Notes
-- Never commit secrets, local DB paths, or runtime tokens.
+- Never commit secrets, local DB paths, or runtime tokens, and never log or expose OpenClaw secrets (auth and config files).
+- Operator actions go through the CLI wrappers (`backend/app/services/overmind.py`, `backend/app/services/openclaw.py`). Never write to the Overmind/OpenClaw DB or files directly: they are the live runtime's state, and the wrappers keep its own checks in the path.
+- Keep the backend response envelope stable. Success: `{ "ok": true, "data": {}, "meta": { "timestamp": "...", "request_id": "..." } }`. Error: `{ "ok": false, "error": { "code": "...", "message": "...", "details": {} }, "meta": { "timestamp": "...", "request_id": "..." } }`.
+- The backend still needs artifacts from the `overmind_hq` core runtime (SQLite DB, heartbeat/pid files, CLI module). Don't archive or remove them while the backend relies on them.
+- `./dev-stack.sh` starts the frontend on `127.0.0.1:5173` and the backend on `127.0.0.1:8788` (override with `OVERMIND_DASHBOARD_PORT` and `FRONTEND_PORT`); Swagger docs are at `/docs`. Start or stop the stack only when the task needs a running app, and use free ports if another project holds these.
 - Backend requires an activated virtual environment before running (`backend/run.sh` sources `backend/.venv/bin/activate`).
 - Frontend behavior depends on `.env`; base config is documented in `frontend/.env.example` and `README.md`.
